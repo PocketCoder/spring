@@ -7,7 +7,22 @@ struct ContentView: View {
 
     var body: some View {
         Group {
-            if model.projectURL == nil { WelcomeView() } else { editor }
+            if model.projectURL == nil { WelcomeView() }
+            else if model.viewMode == .cards { CorkboardView() }
+            else { editor }
+        }
+        .toolbar {
+            if model.projectURL != nil {
+                ToolbarItem(placement: .principal) {
+                    Picker("View", selection: Binding(get: { model.viewMode }, set: { model.viewMode = $0 })) {
+                        Label("Script", systemImage: "doc.text").tag(ProjectModel.ViewMode.script)
+                        Label("Corkboard", systemImage: "square.grid.2x2").tag(ProjectModel.ViewMode.cards)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelStyle(.iconOnly)
+                    .help("Script or corkboard (⌘1 / ⌘2)")
+                }
+            }
         }
         .background(Color(nsColor: Theme.paper))
         .navigationTitle(model.projectURL?.lastPathComponent ?? "Spring")
@@ -43,7 +58,14 @@ struct ContentView: View {
                     .frame(maxWidth: .infinity)
                 }
             }
+            .onAppear { scroll(proxy) }
+            .onChange(of: model.scrollTarget) { scroll(proxy) }
         }
+    }
+
+    private func scroll(_ proxy: ScrollViewProxy) {
+        guard let id = model.scrollTarget else { return }
+        DispatchQueue.main.async { proxy.scrollTo(id, anchor: .top); model.scrollTarget = nil }
     }
 }
 

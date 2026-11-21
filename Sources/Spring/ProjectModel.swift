@@ -68,6 +68,39 @@ final class ProjectModel {
     func update(_ id: UUID, body: String) {
         guard let i = scenes.firstIndex(where: { $0.id == id }), scenes[i].file.body != body else { return }
         scenes[i].file.body = body
+        scheduleSave(id)
+    }
+
+    func updateSynopsis(_ id: UUID, _ text: String) {
+        guard let i = scenes.firstIndex(where: { $0.id == id }), scenes[i].explicitSynopsis != text else { return }
+        scenes[i].setSynopsis(text)
+        scheduleSave(id)
+    }
+
+    // MARK: Corkboard
+
+    enum ViewMode { case script, cards }
+    var viewMode: ViewMode = .script
+    var selected: UUID?
+    var dropTarget: UUID?
+    /// Set to scroll the script view to a scene (from a card double-click).
+    var scrollTarget: UUID?
+
+    /// Moves `id` to just before `target` (or to the end), then writes the new numbers to every file that changed.
+    func move(_ id: UUID, before target: UUID?) {
+        guard id != target, let from = scenes.firstIndex(where: { $0.id == id }) else { return }
+        let scene = scenes.remove(at: from)
+        let to = target.flatMap { t in scenes.firstIndex { $0.id == t } } ?? scenes.endIndex
+        scenes.insert(scene, at: to)
+        for (i, s) in scenes.enumerated() where s.number != i + 1 { save(s.id, rename: false) }
+    }
+
+    func openInScript(_ id: UUID) {
+        viewMode = .script
+        scrollTarget = id
+    }
+
+    private func scheduleSave(_ id: UUID) {
         pending[id]?.cancel()
         pending[id] = Task { [weak self] in
             try? await Task.sleep(for: .seconds(1))

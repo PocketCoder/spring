@@ -24,7 +24,11 @@ public struct MarkdownFile: Equatable, Sendable {
 
     public func value(_ key: String) -> String? {
         guard let line = frontmatter?.first(where: { $0.hasPrefix(key + ":") }) else { return nil }
-        let v = line.dropFirst(key.count + 1).trimmingCharacters(in: .whitespaces.union(.init(charactersIn: "\"'")))
+        var v = line.dropFirst(key.count + 1).trimmingCharacters(in: .whitespaces)
+        if v.count >= 2, let q = v.first, q == "\"" || q == "'", v.last == q {
+            v = String(v.dropFirst().dropLast())
+            if q == "\"" { v = v.replacingOccurrences(of: "\\\"", with: "\"").replacingOccurrences(of: "\\\\", with: "\\") }
+        }
         return v.isEmpty ? nil : v
     }
 

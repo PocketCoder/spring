@@ -11,6 +11,12 @@ public struct SceneFile: Identifiable, Sendable {
     /// `.fountain`/`.txt` have no frontmatter: their number lives in a hidden first-line note, `[[scene: 3]]`.
     public var noteNumber: Int?
 
+    public init(url: URL, file: MarkdownFile, knownModDate: Date? = nil) {
+        self.url = url
+        self.file = file
+        self.knownModDate = knownModDate
+    }
+
     public var number: Int? { file.value("scene").flatMap { Int($0) } ?? noteNumber }
     var isMarkdown: Bool { url.lastPathComponent.lowercased().hasSuffix(".md") }
 
@@ -129,4 +135,42 @@ public enum ProjectIO {
         scene.knownModDate = modDate(scene.url)
         return .saved(renamedFrom: renamedFrom)
     }
+}
+
+// MARK: Synopsis
+// Markdown scenes keep it in a `synopsis` property (shows in Obsidian's Properties);
+// .fountain/.txt use Fountain's own `= synopsis` line under the heading.
+extension SceneFile {
+    /// The synopsis the writer set, if any.
+    public var explicitSynopsis: String {
+        if isMarkdown { return file.value("synopsis") ?? "" }
+        return synopsisLine.map { Fountain.lines(file.body)[$0].trimmingCharacters(in: .whitespaces).dropFirst().trimmingCharacters(in: .whitespaces) } ?? ""
+    }
+
+    /// What a card shows: the synopsis, else the first line of action.
+    public var cardText: String {
+        let s = explicitSynopsis
+        if !s.isEmpty { return s }
+        let lines = Fountain.lines(file.body)
+        return zip(lines, Fountain.classify(file.body)).first { $1 == .action }.map { String($0.0).trimmingCharacters(in: .whitespaces) } ?? ""
+    }
+
+    public mutating func setSynopsis(_ text: String) {
+        let clean = text.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
+        if isMarkdown {
+            let escaped = clean.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+            file.set("synopsis", "\"\(escaped)\"")
+            return
+        }
+        var lines = Fountain.lines(file.body).map(String.init)
+        if let i = synopsisLine {
+            if clean.isEmpty { lines.remove(at: i) } else { lines[i] = "= " + clean }
+        } else if !clean.isEmpty {
+            let heading = Fountain.classify(file.body).firstIndex(of: .heading)
+            lines.insert("= " + clean, at: heading.map { $0 + 1 } ?? 0)
+        }
+        file.body = lines.joined(separator: "\n")
+    }
+
+    private var synopsisLine: Int? { Fountain.classify(file.body).firstIndex(of: .synopsis) }
 }

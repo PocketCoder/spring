@@ -95,5 +95,19 @@ check(p.number == 7 && p.file.body == "INT. SHOP - DAY\n", "note read and hidden
 _ = try ProjectIO.save(&p, number: 4, marker: .tag, rename: false)
 check(try String(contentsOf: plain, encoding: .utf8) == "[[scene: 4]]\nINT. SHOP - DAY\n", "note written back")
 
+// Synopsis: property for markdown, Fountain "=" line otherwise
+var md = SceneFile(url: URL(filePath: "/x/s.fountain.md"), file: MarkdownFile(text: "---\nscene: 1\n---\nINT. BAR - NIGHT\n\nBilly waits.\n"))
+check(md.cardText == "Billy waits.", "card falls back to first action")
+md.setSynopsis("Sarah: \"we need to talk\"")
+check(md.file.value("synopsis") == "Sarah: \"we need to talk\"", "quoted synopsis round trip: \(md.file.text)")
+check(md.cardText == "Sarah: \"we need to talk\"", "card shows synopsis")
+var fo = SceneFile(url: URL(filePath: "/x/s.fountain"), file: MarkdownFile(text: "INT. BAR - NIGHT\n\nBilly waits.\n"))
+fo.setSynopsis("Closing time.")
+check(fo.file.body == "INT. BAR - NIGHT\n= Closing time.\n\nBilly waits.\n", "fountain synopsis line: \(fo.file.body)")
+fo.setSynopsis("Last orders.")
+check(fo.explicitSynopsis == "Last orders." && fo.file.body.components(separatedBy: "= ").count == 2, "synopsis replaced")
+fo.setSynopsis("")
+check(fo.file.body == "INT. BAR - NIGHT\n\nBilly waits.\n", "synopsis removed")
+
 try? FileManager.default.removeItem(at: dir)
 print("SpringChecks: all passed")
