@@ -8,7 +8,7 @@ final class ProjectModel {
     var scenes: [SceneFile] = []
     var conflicts: Set<UUID> = []
     var errorMessage: String?
-    var marker: FountainMarker = .tag
+    var marker: FountainMarker { Prefs.fountainMarker }
     var sceneListHovered = false
 
     @ObservationIgnored private var pending: [UUID: Task<Void, Never>] = [:]
@@ -160,6 +160,62 @@ final class ProjectModel {
             conflicts.remove(id)
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    // MARK: New project, new scene, Graveyard
+
+    func newProject() {
+        let panel = NSSavePanel()
+        panel.title = "New Project"
+        panel.prompt = "Create"
+        panel.nameFieldLabel = "Project name:"
+        panel.nameFieldStringValue = "my-project"
+        panel.canCreateDirectories = true
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try ProjectIO.createProject(at: url, folders: Prefs.projectFolders)
+            if let data = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil) {
+                UserDefaults.standard.set(data, forKey: Self.bookmarkKey)
+            }
+            open(url)
+        } catch {
+            errorMessage = "Couldn't create the project: \(error.localizedDescription)"
+        }
+    }
+
+    func newScene() {
+        guard let root = projectURL else { return }
+        do {
+            let scene = try ProjectIO.newScene(in: root, ext: Prefs.saveExt)
+            scenes.append(scene)
+            save(scene.id, rename: false)
+            openInScript(scene.id)
+        } catch {
+            errorMessage = "Couldn't create a scene: \(error.localizedDescription)"
+        }
+    }
+
+    /// Selected text, already cut from the scene, goes to Graveyard/<heading>.md.
+    func bury(_ text: String, from id: UUID) {
+        guard let root = projectURL, let scene = scenes.first(where: { $0.id == id }) else { return }
+        do { try ProjectIO.bury(text, from: scene, in: root) } catch {
+            errorMessage = "Couldn't write to the Graveyard: \(error.localizedDescription)"
+        }
+    }
+
+    /// Moves the whole scene file into Graveyard/ and renumbers the rest.
+    func buryScene(_ id: UUID) {
+        guard let root = projectURL, let i = scenes.firstIndex(where: { $0.id == id }) else { return }
+        save(id, rename: false)
+        do {
+            _ = try ProjectIO.bury(file: scenes[i].url, in: root)
+            scenes.remove(at: i)
+            pending[id] = nil
+            if selected == id { selected = nil }
+            for (n, s) in scenes.enumerated() where s.number != n + 1 { save(s.id, rename: false) }
+        } catch {
+            errorMessage = "Couldn't move the scene to the Graveyard: \(error.localizedDescription)"
         }
     }
 }

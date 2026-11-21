@@ -34,7 +34,14 @@ struct SpringApp: App {
                     .disabled(!canUpdate)
             }
             CommandGroup(replacing: .newItem) {
+                Button("New Scene") { model.newScene() }.keyboardShortcut("n").disabled(model.projectURL == nil)
+                Button("New Project…") { model.newProject() }.keyboardShortcut("n", modifiers: [.command, .shift])
                 Button("Open Project…") { model.chooseProject() }.keyboardShortcut("o")
+            }
+            CommandGroup(after: .pasteboard) {
+                Divider()
+                Button("Send to Graveyard") { NSApp.sendAction(#selector(SceneTextView.sendToGraveyard(_:)), to: nil, from: nil) }
+                    .keyboardShortcut("g", modifiers: [.command, .shift])
             }
             CommandGroup(before: .sidebar) {
                 Button("Script") { model.viewMode = .script }.keyboardShortcut("1")
@@ -45,5 +52,6 @@ struct SpringApp: App {
                 Button("Save") { model.saveAll() }.keyboardShortcut("s")
             }
         }
+        Settings { SettingsView() }
     }
 }

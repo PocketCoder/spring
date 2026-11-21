@@ -6,18 +6,18 @@ enum Theme {
     static let paper = NSColor(name: nil) { $0.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? NSColor(srgbRed: 0.11, green: 0.11, blue: 0.118, alpha: 1) : NSColor(srgbRed: 0.984, green: 0.984, blue: 0.98, alpha: 1) }
     static let accent = NSColor(srgbRed: 0.184, green: 0.365, blue: 0.541, alpha: 1)
 
-    /// Courier Prime when installed or bundled, else Courier New.
-    static func scriptFont(_ size: CGFloat) -> NSFont {
-        NSFont(name: "Courier Prime", size: size) ?? NSFont(name: "Courier New", size: size) ?? .monospacedSystemFont(ofSize: size, weight: .regular)
+    /// The chosen font (bundled Courier Prime by default), else Courier New.
+    static func scriptFont(_ name: String, _ size: CGFloat) -> NSFont {
+        NSFont(name: name, size: size) ?? NSFont(name: "Courier New", size: size) ?? .monospacedSystemFont(ofSize: size, weight: .regular)
     }
 }
 
 /// Applies Fountain screenplay layout to a scene's text. Indents follow the standard
 /// 60-character page: cue at 22, dialogue 10–45, parenthetical 16–41.
 enum ScriptStyler {
-    static func apply(to storage: NSTextStorage, fontSize: CGFloat) {
+    static func apply(to storage: NSTextStorage, fontName: String, fontSize: CGFloat) {
         let text = storage.string
-        let base = Theme.scriptFont(fontSize)
+        let base = Theme.scriptFont(fontName, fontSize)
         let bold = NSFontManager.shared.convert(base, toHaveTrait: .boldFontMask)
         let cw = ("M" as NSString).size(withAttributes: [.font: base]).width
         let total = (text as NSString).length
@@ -58,13 +58,16 @@ enum ScriptStyler {
 /// One scene's editor. Grows to fit its text so scenes stack into one continuous script.
 struct ScriptTextView: NSViewRepresentable {
     @Binding var text: String
+    var fontName: String
     var fontSize: CGFloat
     var onEndEditing: () -> Void = {}
+    var onBury: (String) -> Void = { _ in }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     func makeNSView(context: Context) -> NSTextView {
-        let tv = NSTextView(usingTextLayoutManager: false)
+        let tv = SceneTextView(usingTextLayoutManager: false)
+        tv.onBury = { [weak coordinator = context.coordinator] in coordinator?.parent.onBury($0) }
         tv.isRichText = false
         tv.allowsUndo = true
         tv.drawsBackground = false
@@ -82,7 +85,8 @@ struct ScriptTextView: NSViewRepresentable {
     }
 
     func updateNSView(_ tv: NSTextView, context: Context) {
-        let sizeChanged = context.coordinator.parent.fontSize != fontSize
+        let old = context.coordinator.parent
+        let sizeChanged = old.fontSize != fontSize || old.fontName != fontName
         context.coordinator.parent = self
         if tv.string != text {
             tv.string = text
@@ -97,7 +101,7 @@ struct ScriptTextView: NSViewRepresentable {
         let width = proposal.width ?? 600
         tc.containerSize = NSSize(width: width, height: .greatestFiniteMagnitude)
         lm.ensureLayout(for: tc)
-        let lineHeight = lm.defaultLineHeight(for: Theme.scriptFont(fontSize))
+        let lineHeight = lm.defaultLineHeight(for: Theme.scriptFont(fontName, fontSize))
         return CGSize(width: width, height: max(lm.usedRect(for: tc).height, lineHeight))
     }
 
@@ -113,10 +117,35 @@ struct ScriptTextView: NSViewRepresentable {
 
         func textDidEndEditing(_ notification: Notification) { parent.onEndEditing() }
 
+        func textView(_ view: NSTextView, menu: NSMenu, for event: NSEvent, at charIndex: Int) -> NSMenu? {
+            guard view.selectedRange().length > 0 else { return menu }
+            let item = NSMenuItem(title: "Send to Graveyard", action: #selector(SceneTextView.sendToGraveyard(_:)), keyEquivalent: "")
+            item.target = view
+            menu.insertItem(item, at: 0)
+            menu.insertItem(.separator(), at: 1)
+            return menu
+        }
+
         func restyle(_ tv: NSTextView) {
             guard let storage = tv.textStorage else { return }
-            ScriptStyler.apply(to: storage, fontSize: parent.fontSize)
-            tv.typingAttributes = [.font: Theme.scriptFont(parent.fontSize), .foregroundColor: NSColor.textColor]
+            ScriptStyler.apply(to: storage, fontName: parent.fontName, fontSize: parent.fontSize)
+            tv.typingAttributes = [.font: Theme.scriptFont(parent.fontName, parent.fontSize), .foregroundColor: NSColor.textColor]
         }
+    }
+}
+
+/// A scene's text view. "Send to Graveyard" (context menu, or Edit menu ⇧⌘G via the responder chain)
+/// cuts the selection, undoably, and hands it to the Graveyard.
+final class SceneTextView: NSTextView {
+    var onBury: ((String) -> Void)?
+
+    @objc func sendToGraveyard(_ sender: Any?) {
+        let range = selectedRange()
+        guard range.length > 0, let text = (string as NSString?)?.substring(with: range) else { return }
+        if shouldChangeText(in: range, replacementString: "") {
+            textStorage?.replaceCharacters(in: range, with: "")
+            didChangeText()
+        }
+        onBury?(text)
     }
 }

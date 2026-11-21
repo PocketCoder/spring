@@ -68,6 +68,11 @@ struct SceneCard: View {
         .shadow(color: .black.opacity(0.05), radius: 2, y: 1)
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { model.openInScript(scene.id) }
+        .contextMenu {
+            Button("Open in Script") { model.openInScript(scene.id) }
+            Divider()
+            Button("Send Scene to Graveyard") { model.buryScene(scene.id) }
+        }
         .onTapGesture { model.selected = scene.id }
         .draggable(scene.id.uuidString) {
             Text(scene.heading).font(.custom("Courier Prime", size: 13).bold()).padding(8)

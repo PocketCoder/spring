@@ -3,7 +3,8 @@ import SwiftUI
 
 struct ContentView: View {
     @Environment(ProjectModel.self) private var model
-    @AppStorage("fontSize") private var fontSize = 15.0
+    @AppStorage(Prefs.fontSize) private var fontSize = 15.0
+    @AppStorage(Prefs.fontName) private var fontName = "Courier Prime"
 
     var body: some View {
         Group {
@@ -44,13 +45,15 @@ struct ContentView: View {
                             if model.conflicts.contains(scene.id) { ConflictBanner(scene: scene) }
                             ScriptTextView(
                                 text: Binding(get: { model.body(of: scene.id) }, set: { model.update(scene.id, body: $0) }),
+                                fontName: fontName,
                                 fontSize: fontSize,
-                                onEndEditing: { model.finishEditing(scene.id) }
+                                onEndEditing: { model.finishEditing(scene.id) },
+                                onBury: { model.bury($0, from: scene.id) }
                             )
                             .id(scene.id)
                         }
                         if model.scenes.isEmpty {
-                            Text("No scenes yet. Add .fountain.md files to the Scenes folder.").foregroundStyle(.secondary)
+                            Button("New Scene") { model.newScene() }
                         }
                     }
                     .frame(width: fontSize * 40)
@@ -72,6 +75,7 @@ struct ContentView: View {
 /// Scene headings down the left, faded until the pointer is over them.
 struct SceneList: View {
     @Environment(ProjectModel.self) private var model
+    @AppStorage(Prefs.fadeSceneList) private var fade = true
     let proxy: ScrollViewProxy
 
     var body: some View {
@@ -98,7 +102,7 @@ struct SceneList: View {
             .padding(.horizontal, 12)
         }
         .frame(width: 260)
-        .opacity(model.sceneListHovered ? 1 : 0.22)
+        .opacity(model.sceneListHovered || !fade ? 1 : 0.22)
         .animation(.easeOut(duration: 0.25), value: model.sceneListHovered)
         .onHover { model.sceneListHovered = $0 }
     }
@@ -147,3 +151,4 @@ struct WelcomeView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
+

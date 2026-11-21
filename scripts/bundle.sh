@@ -18,6 +18,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Spring"
 [ -d Resources/Fonts ] && cp -R Resources/Fonts "$APP/Contents/Resources/"
+cp Resources/AppIcon.icns "$APP/Contents/Resources/"
 BUNDLE_ID="${BUNDLE_ID:-uk.spring.app}"
 
 # Sparkle: the framework sits next to the binary (rpath @executable_path/../Frameworks).
@@ -43,6 +44,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleDisplayName</key><string>Spring</string>
   <key>CFBundleIdentifier</key><string>${BUNDLE_ID}</string>
   <key>CFBundleExecutable</key><string>Spring</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>${VERSION}</string>
   <key>CFBundleVersion</key><string>${BUILD_NUMBER}</string>

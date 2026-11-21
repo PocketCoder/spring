@@ -174,3 +174,67 @@ extension SceneFile {
 
     private var synopsisLine: Int? { Fountain.classify(file.body).firstIndex(of: .synopsis) }
 }
+
+// MARK: Creating projects and scenes, and the Graveyard
+extension ProjectIO {
+    public static let defaultFolders = ["Scenes", "Characters", "Locations", "Beats", "Research", "Notes", "Graveyard"]
+
+    /// Creates the folder layout plus `Logline.md` and `front-matter.md` (the Fountain title page).
+    /// Never overwrites: existing files and folders are left alone.
+    public static func createProject(at root: URL, folders: [String] = defaultFolders) throws {
+        let fm = FileManager.default
+        for f in Set(folders + ["Scenes"]) { try fm.createDirectory(at: root.appending(path: f), withIntermediateDirectories: true) }
+        let title = root.lastPathComponent
+        let starters = [
+            "Logline.md": "# Logline\n\n",
+            "front-matter.md": "Title: \(title)\nCredit: Written by\nAuthor: \nDraft date: \n",
+        ]
+        for (name, text) in starters where !fm.fileExists(atPath: root.appending(path: name).path) {
+            try text.write(to: root.appending(path: name), atomically: true, encoding: .utf8)
+        }
+    }
+
+    /// A new, empty scene file in `Scenes/`, named "Untitled scene" until it gets a heading.
+    public static func newScene(in project: URL, ext: String) throws -> SceneFile {
+        let dir = project.appending(path: "Scenes")
+        var url = dir.appending(path: "Untitled scene\(ext)")
+        var n = 2
+        while FileManager.default.fileExists(atPath: url.path) { url = dir.appending(path: "Untitled scene \(n)\(ext)"); n += 1 }
+        var scene = SceneFile(url: url, file: MarkdownFile(text: "INT. \n"))
+        try scene.diskText.write(to: scene.url, atomically: true, encoding: .utf8)
+        scene.knownModDate = modDate(scene.url)
+        return scene
+    }
+
+    static func graveyard(_ project: URL) throws -> URL {
+        let dir = project.appending(path: "Graveyard")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    /// Appends cut text to `Graveyard/<heading>.md` with the date and a link back to the scene. Returns that file.
+    @discardableResult
+    public static func bury(_ text: String, from scene: SceneFile, in project: URL, date: Date = .now) throws -> URL {
+        let name = scene.heading.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
+        let url = try graveyard(project).appending(path: name + ".md")
+        let stamp = date.formatted(.iso8601.year().month().day().dateSeparator(.dash)) + " " + date.formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits))
+        let entry = "## \(stamp) from [[\(linkName(of: scene.url))]]\n\n\(text.trimmingCharacters(in: .newlines))\n\n"
+        let existing = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        try (existing + entry).write(to: url, atomically: true, encoding: .utf8)
+        return url
+    }
+
+    /// Moves a whole scene file into `Graveyard/`, numbering the name if one is already there. Returns the new URL.
+    public static func bury(file: URL, in project: URL) throws -> URL {
+        let dir = try graveyard(project)
+        let stem = stem(of: file), ext = ext(of: file) ?? ""
+        var target = dir.appending(path: file.lastPathComponent)
+        var n = 2
+        while FileManager.default.fileExists(atPath: target.path) {
+            target = dir.appending(path: "\(stem) \(n)\(ext)")
+            n += 1
+        }
+        try FileManager.default.moveItem(at: file, to: target)
+        return target
+    }
+}

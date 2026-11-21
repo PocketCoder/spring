@@ -109,5 +109,27 @@ check(fo.explicitSynopsis == "Last orders." && fo.file.body.components(separated
 fo.setSynopsis("")
 check(fo.file.body == "INT. BAR - NIGHT\n\nBilly waits.\n", "synopsis removed")
 
+// New project, new scene and the Graveyard
+let proj = dir.appending(path: "new-project")
+try ProjectIO.createProject(at: proj)
+for f in ProjectIO.defaultFolders { check(FileManager.default.fileExists(atPath: proj.appending(path: f).path), "folder \(f)") }
+check(try String(contentsOf: proj.appending(path: "front-matter.md"), encoding: .utf8).hasPrefix("Title: new-project\n"), "title page")
+try "mine".write(to: proj.appending(path: "Logline.md"), atomically: true, encoding: .utf8)
+try ProjectIO.createProject(at: proj)
+check(try String(contentsOf: proj.appending(path: "Logline.md"), encoding: .utf8) == "mine", "createProject never overwrites")
+let s1 = try ProjectIO.newScene(in: proj, ext: ".fountain.md")
+let s2 = try ProjectIO.newScene(in: proj, ext: ".fountain.md")
+check(s1.url.lastPathComponent == "Untitled scene.fountain.md" && s2.url.lastPathComponent == "Untitled scene 2.fountain.md", "new scenes don't collide")
+var bar = SceneFile(url: proj.appending(path: "Scenes/INT. BAR - NIGHT.fountain.md"), file: MarkdownFile(text: "INT. BAR - NIGHT\n"))
+let grave = try ProjectIO.bury("He puts the glass down.\n", from: bar, in: proj, date: Date(timeIntervalSince1970: 0))
+try ProjectIO.bury("Second cut.", from: bar, in: proj, date: Date(timeIntervalSince1970: 0))
+let gtext = try String(contentsOf: grave, encoding: .utf8)
+check(grave.lastPathComponent == "INT. BAR - NIGHT.md" && gtext.contains("from [[INT. BAR - NIGHT.fountain]]\n\nHe puts the glass down.\n\n") && gtext.contains("Second cut."), "selection buried: \(gtext)")
+let moved = try ProjectIO.bury(file: s1.url, in: proj)
+let _ = try ProjectIO.newScene(in: proj, ext: ".fountain.md")
+let moved2 = try ProjectIO.bury(file: proj.appending(path: "Scenes/Untitled scene.fountain.md"), in: proj)
+check(moved.path.contains("/Graveyard/Untitled scene.fountain.md") && moved2.lastPathComponent == "Untitled scene 2.fountain.md", "file buried without overwriting")
+_ = bar
+
 try? FileManager.default.removeItem(at: dir)
 print("SpringChecks: all passed")
