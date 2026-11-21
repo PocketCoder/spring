@@ -3,13 +3,13 @@
   <channel>
     <title>Spring nightly</title>
     <item>
-      <title>0.0.0-nightly.7</title>
-      <pubDate>Sat, 21 Nov 2026 09:31:16 +0000</pubDate>
-      <sparkle:version>7</sparkle:version>
-      <sparkle:shortVersionString>0.0.0-nightly.7</sparkle:shortVersionString>
+      <title>0.0.0-nightly.8</title>
+      <pubDate>Sat, 21 Nov 2026 09:36:53 +0000</pubDate>
+      <sparkle:version>8</sparkle:version>
+      <sparkle:shortVersionString>0.0.0-nightly.8</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
-      <link>https://github.com/PocketCoder/spring/commit/56685ecf0b3178eaff73b19a3940d27b5684a483</link>
-      <enclosure url="https://github.com/PocketCoder/spring/releases/download/nightly/Spring-0.0.0-nightly.7-macOS.zip" sparkle:edSignature="JVx8WQmg4A3N8oqJmW/paXwIXZb2m/dKKyD/fEESRIfN4Em7/3Aq/Hj4mWCddGDC6Jnrv1MdpOGsBfii1ZDlCw==" length="2214621" type="application/octet-stream"/>
+      <link>https://github.com/PocketCoder/spring/commit/abc12c4ff5ff73606dfca10622263f7a6700dcd0</link>
+      <enclosure url="https://github.com/PocketCoder/spring/releases/download/nightly/Spring-0.0.0-nightly.8-macOS.zip" sparkle:edSignature="axjHVcswlViR1CqtnCoRuBqeMkHV+50Ct9ozsfTuVFVcH+Y1L0AlgIH804iU4MRYju/l4sEX94Y6VgW6dPV0CQ==" length="2239253" type="application/octet-stream"/>
     </item>
   </channel>
 </rss>
