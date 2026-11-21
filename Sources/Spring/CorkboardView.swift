@@ -22,12 +22,12 @@ struct CorkboardView: View {
                 Spacer()
                 if model.showBeats { BeatTemplateMenu() } else { Button("New Scene") { model.newScene() } }
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 10)
-            Divider()
+            .padding(.horizontal, 24)
+            .padding(.top, 14)
+            .padding(.bottom, 4)
             if model.showBeats { BeatsView() } else { scenes }
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Color(nsColor: Theme.paper2))
     }
 
     private var scenes: some View {
@@ -45,11 +45,11 @@ struct CorkboardView: View {
                 withAnimation(.snappy) { model.move(id, before: nil) }
                 return true
             }
-            .background(Color(nsColor: .windowBackgroundColor))
+            .background(Color(nsColor: Theme.paper2))
             .onTapGesture { model.selected = nil }
 
             if let id = model.selected, let scene = model.scenes.first(where: { $0.id == id }) {
-                Divider()
+                Rectangle().fill(Color(nsColor: Theme.line)).frame(width: 1)
                 SceneInspector(scene: scene).frame(width: 280)
             }
         }
@@ -82,8 +82,8 @@ struct SceneCard: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, minHeight: 170, maxHeight: 170, alignment: .topLeading)
-        .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(isSelected ? Color(nsColor: Theme.accent) : Color.primary.opacity(0.1), lineWidth: isSelected ? 1.5 : 1))
+        .background(Color(nsColor: Theme.paper), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(isSelected ? Color(nsColor: Theme.accent) : Color(nsColor: Theme.line), lineWidth: isSelected ? 1.5 : 1))
         .overlay(alignment: .leading) {
             if isDropTarget {
                 RoundedRectangle(cornerRadius: 2).fill(Color(nsColor: Theme.accent)).frame(width: 3).offset(x: -14)
@@ -128,7 +128,7 @@ struct SceneInspector: View {
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(10)
-                    .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+                    .background(Color(nsColor: Theme.paper), in: RoundedRectangle(cornerRadius: 8))
                     .textSelection(.enabled)
             }
             VStack(alignment: .leading, spacing: 6) {
@@ -138,7 +138,7 @@ struct SceneInspector: View {
                     .frame(height: 90)
                     .scrollContentBackground(.hidden)
                     .padding(6)
-                    .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 7))
+                    .background(Color(nsColor: Theme.paper2), in: RoundedRectangle(cornerRadius: 7))
                     .accessibilityLabel("Synopsis")
             }
             Button("Open in Script") { model.openInScript(scene.id) }

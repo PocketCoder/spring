@@ -34,7 +34,7 @@ struct BeatsView: View {
                 .onTapGesture { model.selectedCard = nil }
             }
             if let id = model.selectedCard, let card = columns.flatMap(\.cards).first(where: { $0.id == id }) {
-                Divider()
+                Rectangle().fill(Color(nsColor: Theme.line)).frame(width: 1)
                 BeatInspector(card: card).frame(width: 280)
             }
         }
@@ -134,8 +134,8 @@ struct BeatCard: View {
         }
         .padding(.horizontal, 12).padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(model.selectedCard == card.id ? Color(nsColor: Theme.accent) : Color.primary.opacity(0.1),
+        .background(Color(nsColor: Theme.paper), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(model.selectedCard == card.id ? Color(nsColor: Theme.accent) : Color(nsColor: Theme.line),
                                                                 lineWidth: model.selectedCard == card.id ? 1.5 : 1))
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { if let scene { model.openInScript(scene.id) } }
@@ -181,7 +181,7 @@ struct BeatInspector: View {
                     .frame(minHeight: 160)
                     .scrollContentBackground(.hidden)
                     .padding(6)
-                    .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 7))
+                    .background(Color(nsColor: Theme.paper2), in: RoundedRectangle(cornerRadius: 7))
                     .accessibilityLabel("Beat text")
             }
             Button("Delete Card", role: .destructive) {

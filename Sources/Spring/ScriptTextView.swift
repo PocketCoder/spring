@@ -5,6 +5,17 @@ import SwiftUI
 enum Theme {
     static let paper = NSColor(name: nil) { $0.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? NSColor(srgbRed: 0.11, green: 0.11, blue: 0.118, alpha: 1) : NSColor(srgbRed: 0.984, green: 0.984, blue: 0.98, alpha: 1) }
     static let accent = NSColor(srgbRed: 0.184, green: 0.365, blue: 0.541, alpha: 1)
+    /// Binder, corkboard and welcome side panels: a shade darker than the page.
+    static let paper2 = dynamic(light: (0.957, 0.953, 0.941), dark: (0.137, 0.137, 0.145))
+    /// Hairlines and card borders.
+    static let line = dynamic(light: (0.902, 0.894, 0.875), dark: (0.18, 0.18, 0.192))
+
+    static func dynamic(light: (CGFloat, CGFloat, CGFloat), dark: (CGFloat, CGFloat, CGFloat)) -> NSColor {
+        NSColor(name: nil) {
+            let c = $0.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
+            return NSColor(srgbRed: c.0, green: c.1, blue: c.2, alpha: 1)
+        }
+    }
 
     /// The chosen font (bundled Courier Prime by default), else Courier New.
     static func scriptFont(_ name: String, _ size: CGFloat) -> NSFont {
@@ -86,6 +97,7 @@ struct ScriptTextView: NSViewRepresentable {
     var fontName: String
     var fontSize: CGFloat
     var onEndEditing: () -> Void = {}
+    var onBeginEditing: () -> Void = {}
     var onBury: (String) -> Void = { _ in }
     /// Whole-line suggestions for (text before the cursor on this line, previous line is blank).
     var suggest: (String, Bool) -> [String] = { _, _ in [] }
@@ -183,6 +195,7 @@ struct ScriptTextView: NSViewRepresentable {
         }
 
         func textDidEndEditing(_ notification: Notification) { parent.onEndEditing() }
+        func textDidBeginEditing(_ notification: Notification) { parent.onBeginEditing() }
 
         func textView(_ view: NSTextView, menu: NSMenu, for event: NSEvent, at charIndex: Int) -> NSMenu? {
             guard view.selectedRange().length > 0 else { return menu }

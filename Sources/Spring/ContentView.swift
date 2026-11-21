@@ -19,27 +19,57 @@ struct ContentView: View {
                     case .script: editor
                     }
                 }
+                .toolbar { toolbar }
             }
         }
-        .toolbar {
-            if model.projectURL != nil {
-                ToolbarItem(placement: .principal) {
-                    Picker("View", selection: Binding(get: { model.viewMode }, set: { model.viewMode = $0 })) {
-                        Label("Script", systemImage: "doc.text").tag(ProjectModel.ViewMode.script)
-                        Label("Corkboard", systemImage: "square.grid.2x2").tag(ProjectModel.ViewMode.cards)
-                    }
-                    .pickerStyle(.segmented)
-                    .labelStyle(.iconOnly)
-                    .help("Script or corkboard (⌘1 / ⌘2)")
-                }
-            }
-        }
-        .background(Color(nsColor: Theme.paper))
-        .navigationTitle(model.projectURL?.lastPathComponent ?? "Spring")
+        // No hard title bar: the toolbar sits on the page colour with no separator, as in the design.
+        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+        .containerBackground(Color(nsColor: Theme.paper), for: .window)
+        .navigationTitle("")
         .alert("Spring", isPresented: .constant(model.errorMessage != nil)) {
             Button("OK") { model.errorMessage = nil }
         } message: {
             Text(model.errorMessage ?? "")
+        }
+    }
+
+    @ToolbarContentBuilder private var toolbar: some ToolbarContent {
+        ToolbarItem(placement: .principal) {
+            HStack(spacing: 6) {
+                Text(model.projectURL?.lastPathComponent ?? "").fontWeight(.semibold).foregroundStyle(.primary)
+                Text("·")
+                Text(caption)
+            }
+            .font(.system(size: 12))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+        }
+        ToolbarItemGroup(placement: .primaryAction) {
+            Picker("View", selection: Binding(get: { model.viewMode == .note ? .script : model.viewMode }, set: { model.viewMode = $0 })) {
+                Label("Script", systemImage: "doc.text").tag(ProjectModel.ViewMode.script)
+                Label("Corkboard", systemImage: "square.grid.2x2").tag(ProjectModel.ViewMode.cards)
+            }
+            .pickerStyle(.segmented)
+            .labelStyle(.iconOnly)
+            .help("Script or corkboard (⌘1 / ⌘2)")
+            Menu {
+                Button("PDF…") { model.exportPDF() }
+                Button("Final Draft…") { model.export(as: "fdx") }
+                Button("Word Document…") { model.export(as: "docx") }
+                Button("Fountain…") { model.exportFountain() }
+            } label: {
+                Label("Export", systemImage: "square.and.arrow.up")
+            }
+            .menuIndicator(.hidden)
+            .help("Export")
+        }
+    }
+
+    private var caption: String {
+        switch model.viewMode {
+        case .script: return "Script"
+        case .cards: return model.showBeats ? "Beats" : "Corkboard"
+        case .note: return model.note?.url.deletingPathExtension().lastPathComponent ?? "Note"
         }
     }
 
@@ -57,23 +87,24 @@ struct ContentView: View {
                                 fontName: fontName,
                                 fontSize: fontSize,
                                 onEndEditing: { model.finishEditing(scene.id) },
+                                onBeginEditing: { model.focusedScene = scene.id },
                                 onBury: { model.bury($0, from: scene.id) },
                                 suggest: { model.suggestions(for: $0, afterBlank: $1) }
                             )
                             .id(scene.id)
                         }
-                        if model.scenes.isEmpty {
-                            Button("New Scene") { model.newScene() }
-                        }
+                        if model.scenes.isEmpty { EmptyScript() }
                     }
                     .frame(width: fontSize * 40)
                     .padding(.vertical, 56)
                     .frame(maxWidth: .infinity)
                 }
             }
+            .overlay(alignment: .bottomTrailing) { StatusLine().padding(.trailing, 20).padding(.bottom, 14) }
             .onAppear { scroll(proxy) }
             .onChange(of: model.scrollTarget) { scroll(proxy) }
         }
+        .background(Color(nsColor: Theme.paper))
     }
 
     private func scroll(_ proxy: ScrollViewProxy) {
@@ -149,38 +180,170 @@ struct ConflictBanner: View {
     }
 }
 
+/// "Scene 2 of 6 · 1,284 words", faint, bottom right of the writing view.
+struct StatusLine: View {
+    @Environment(ProjectModel.self) private var model
+    var body: some View {
+        let index = model.focusedScene.flatMap { id in model.scenes.firstIndex { $0.id == id } }
+        HStack(spacing: 14) {
+            if let index { Text("Scene \(index + 1) of \(model.scenes.count)") } else { Text("\(model.scenes.count) scenes") }
+            Text("\(model.wordCount.formatted()) words")
+        }
+        .font(.system(size: 11))
+        .foregroundStyle(.tertiary)
+        .allowsHitTesting(false)
+    }
+}
+
+/// Two panes, as in the design: actions and the Obsidian prompt on the left, recent projects on the right.
 struct WelcomeView: View {
     @Environment(ProjectModel.self) private var model
     @AppStorage(Prefs.vaultPath) private var vaultPath = ""
     @AppStorage(Prefs.vaultPromptDone) private var promptDone = false
 
     var body: some View {
-        VStack(spacing: 16) {
-            Text("Spring").font(.custom("Courier Prime", size: 34).bold())
-            HStack {
-                Button("New Project…") { model.newProject() }
-                Button("Open Project Folder…") { model.chooseProject() }
-                    .buttonStyle(.borderedProminent)
+        HStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Spring").font(.custom("Courier Prime", size: 34).bold())
+                Text("Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev")")
+                    .font(.system(size: 13)).foregroundStyle(.secondary)
+                    .padding(.bottom, 24)
+                WelcomeAction(icon: "plus", title: "New project…", caption: "Creates Scenes, Characters, Locations and the rest") { model.newProject() }
+                WelcomeAction(icon: "folder", title: "Open project folder…", caption: "Any folder, in or out of a vault") { model.chooseProject() }
                     .keyboardShortcut("o")
-            }
-            if vaultPath.isEmpty && !promptDone {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Use with Obsidian?").font(.headline)
-                    Text("Pick your vault to use its templates and keep links tidy across it. You can skip this and set it later in Settings.")
-                        .font(.callout).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    HStack {
-                        Button("Choose Vault…") { ProjectModel.chooseVault() }
-                        Button("Skip") { promptDone = true }
+                Spacer()
+                if vaultPath.isEmpty && !promptDone {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Use with Obsidian?").font(.system(size: 13, weight: .semibold))
+                        Text("Pick your vault to use its templates and keep links tidy. You can skip this and set it later in Settings.")
+                            .font(.system(size: 12)).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        HStack {
+                            Button("Choose Vault…") { ProjectModel.chooseVault() }.buttonStyle(.borderedProminent)
+                            Button("Skip") { promptDone = true }
+                        }
+                        .controlSize(.small)
+                        .tint(Color(nsColor: Theme.accent))
                     }
+                    .padding(14)
+                    .background(Color(nsColor: Theme.paper2), in: RoundedRectangle(cornerRadius: 10))
                 }
-                .padding(14)
-                .frame(width: 380, alignment: .leading)
-                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
-                .padding(.top, 24)
             }
+            .padding(.horizontal, 36)
+            .padding(.top, 48)
+            .padding(.bottom, 28)
+            .frame(width: 400, alignment: .leading)
+            .frame(maxHeight: .infinity)
+            .background(Color(nsColor: Theme.paper))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("RECENT").font(.system(size: 11, weight: .semibold)).tracking(0.6).foregroundStyle(.secondary)
+                    .padding(.horizontal, 10).padding(.bottom, 8)
+                let recents = model.recents
+                if recents.isEmpty {
+                    Text("Projects you open appear here.").font(.system(size: 12)).foregroundStyle(.tertiary).padding(.horizontal, 10)
+                }
+                ForEach(recents, id: \.self) { url in
+                    Button { model.openRecent(url) } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(url.lastPathComponent).font(.system(size: 13, weight: .semibold)).foregroundStyle(.primary)
+                            Text((url.deletingLastPathComponent().path as NSString).abbreviatingWithTildeInPath)
+                                .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                        }
+                        .padding(.horizontal, 10).padding(.vertical, 8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(RoundedRectangle(cornerRadius: 7))
+                    }
+                    .buttonStyle(HoverRowStyle())
+                }
+                Spacer()
+            }
+            .padding(.top, 56)
+            .padding(.horizontal, 16)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(Color(nsColor: Theme.paper2))
+            .overlay(alignment: .leading) { Rectangle().fill(Color(nsColor: Theme.line)).frame(width: 1) }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .ignoresSafeArea()
     }
 }
 
+struct WelcomeAction: View {
+    let icon: String, title: String, caption: String
+    let action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: icon).font(.system(size: 16)).foregroundStyle(Color(nsColor: Theme.accent)).frame(width: 20)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.system(size: 13, weight: .semibold)).foregroundStyle(.primary)
+                    Text(caption).font(.system(size: 12)).foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 12).padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(HoverRowStyle())
+    }
+}
+
+/// A quiet row that tints on hover and press, like a sidebar row.
+struct HoverRowStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HoverRow(configuration: configuration)
+    }
+    private struct HoverRow: View {
+        let configuration: ButtonStyleConfiguration
+        @Environment(\.isFocused) private var focused
+        var body: some View {
+            configuration.label
+                .background(Color.primary.opacity(configuration.isPressed ? 0.1 : 0.0001), in: RoundedRectangle(cornerRadius: 8))
+                .modifier(HoverTint())
+        }
+    }
+}
+
+/// Tints on hover without @State (the SwiftUI macro plugin isn't available in this toolchain): uses .onHover with an NSCursor-free overlay.
+struct HoverTint: ViewModifier {
+    func body(content: Content) -> some View {
+        content.overlay(HoverOverlay().allowsHitTesting(false))
+    }
+}
+
+/// AppKit tracking area, so hover works without SwiftUI @State.
+struct HoverOverlay: NSViewRepresentable {
+    func makeNSView(context: Context) -> HoverView { HoverView() }
+    func updateNSView(_ nsView: HoverView, context: Context) {}
+    final class HoverView: NSView {
+        override func updateTrackingAreas() {
+            trackingAreas.forEach(removeTrackingArea)
+            addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways], owner: self))
+        }
+        override func mouseEntered(with event: NSEvent) { layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.06).cgColor }
+        override func mouseExited(with event: NSEvent) { layer?.backgroundColor = nil }
+        override func makeBackingLayer() -> CALayer { let l = CALayer(); l.cornerRadius = 8; return l }
+        override var wantsUpdateLayer: Bool { true }
+        override init(frame: NSRect) { super.init(frame: frame); wantsLayer = true }
+        required init?(coder: NSCoder) { fatalError() }
+    }
+}
+
+/// Shown in the writing column when Scenes/ is empty.
+struct EmptyScript: View {
+    @Environment(ProjectModel.self) private var model
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("INT. ").font(.custom("Courier Prime", size: 15).bold()).foregroundStyle(.tertiary)
+            Text("This project has no scenes yet.").font(.system(size: 13)).foregroundStyle(.secondary)
+            HStack(spacing: 10) {
+                Button("New Scene") { model.newScene() }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Color(nsColor: Theme.accent))
+                Text("⌘N").font(.system(size: 12)).foregroundStyle(.tertiary)
+            }
+        }
+        .padding(.top, 24)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}

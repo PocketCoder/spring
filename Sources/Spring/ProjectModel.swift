@@ -53,6 +53,7 @@ final class ProjectModel {
         saveAll()
         scopedURL?.stopAccessingSecurityScopedResource()
         scopedURL = url.startAccessingSecurityScopedResource() ? url : nil
+        rememberRecent(url)
         do {
             scenes = try ProjectIO.loadScenes(in: url)
             note = nil
@@ -495,5 +496,36 @@ final class ProjectModel {
               let folder = Self.templatesFolder,
               let text = try? String(contentsOf: folder.appending(path: name), encoding: .utf8) else { return nil }
         return Templates.render(text, title: title)
+    }
+
+    // MARK: Recent projects and the status line
+
+    private static let recentsKey = "recentProjects"
+    /// The scene the cursor is in, for the status line.
+    var focusedScene: UUID?
+
+    var recents: [URL] {
+        (UserDefaults.standard.array(forKey: Self.recentsKey) as? [Data] ?? []).compactMap { data in
+            var stale = false
+            return try? URL(resolvingBookmarkData: data, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &stale)
+        }
+    }
+
+    private func rememberRecent(_ url: URL) {
+        guard let data = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil) else { return }
+        var list = (UserDefaults.standard.array(forKey: Self.recentsKey) as? [Data] ?? []).filter { d in
+            var stale = false
+            let u = try? URL(resolvingBookmarkData: d, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &stale)
+            return u?.standardizedFileURL != url.standardizedFileURL
+        }
+        list.insert(data, at: 0)
+        UserDefaults.standard.set(Array(list.prefix(6)), forKey: Self.recentsKey)
+        UserDefaults.standard.set(data, forKey: Self.bookmarkKey)
+    }
+
+    func openRecent(_ url: URL) { open(url) }
+
+    var wordCount: Int {
+        scenes.reduce(0) { $0 + $1.file.body.split(whereSeparator: { $0.isWhitespace }).count }
     }
 }

@@ -46,7 +46,7 @@ struct SpringApp: App {
                     NSApp.activate()
                 }
         }
-        .windowToolbarStyle(.unifiedCompact)
+        .windowToolbarStyle(.unified(showsTitle: false))
         .commands {
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates…") { updater.checkForUpdates(nil) }

@@ -41,6 +41,8 @@ struct BinderView: View {
             }
         }
         .listStyle(.sidebar)
+        .scrollContentBackground(.hidden)
+        .background(Color(nsColor: Theme.paper2))
     }
 
     private var selection: String? {
