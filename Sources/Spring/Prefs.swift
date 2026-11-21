@@ -93,6 +93,8 @@ struct EditorSettings: View {
     @AppStorage(Prefs.dim) private var dim = false
     @AppStorage(Prefs.sceneNaming) private var naming = "heading"
     @AppStorage("autocompleteFill") private var fill = true
+    @AppStorage("tabMakesCue") private var tabCue = true
+    @AppStorage("dailyGoal") private var goal = 0
 
     var body: some View {
         Form {
@@ -100,6 +102,13 @@ struct EditorSettings: View {
             Text("Keeps the line you're writing in the middle of the window.").font(.caption).foregroundStyle(.secondary)
             Toggle("Dim all but the current paragraph", isOn: $dim)
             Toggle("Fill in the first suggestion as you type", isOn: $fill)
+            Toggle("Tab turns a line into a character name", isOn: $tabCue)
+            LabeledContent("Daily goal:") {
+                HStack {
+                    TextField("", value: $goal, format: .number).frame(width: 70)
+                    Text("words (0 for none)").foregroundStyle(.secondary)
+                }
+            }
             Text("Off: suggestions show in a list and nothing is typed until you pick one.").font(.caption).foregroundStyle(.secondary)
             Picker("Scene file names:", selection: $naming) {
                 Text("First scene heading").tag("heading")

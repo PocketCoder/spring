@@ -27,6 +27,7 @@ struct ContentView: View {
                 .sheet(isPresented: Binding(get: { model.showTitlePage }, set: { model.showTitlePage = $0 })) { TitlePageSheet() }
                 .sheet(isPresented: Binding(get: { model.showSnapshots }, set: { model.showSnapshots = $0 })) { SnapshotsSheet() }
                 .sheet(isPresented: Binding(get: { model.showReport }, set: { model.showReport = $0 })) { ReportSheet() }
+                .sheet(isPresented: Binding(get: { model.showJump }, set: { model.showJump = $0 })) { JumpSheet() }
                 .inspector(isPresented: Binding(get: { model.panel != nil }, set: { if !$0 { model.panel = nil } })) {
                     Group { if model.panel == .find { FindPanel() } else { ScenePanel() } }
                         .inspectorColumnWidth(min: 260, ideal: 300, max: 420)
@@ -114,6 +115,7 @@ struct ContentView: View {
                                 focusRequest: model.focusRequest,
                                 typewriter: typewriter,
                                 dim: dim,
+                                highlight: model.highlightCharacter,
                                 suggest: { model.suggestions(for: $0, afterBlank: $1) }
                             )
                             .opacity(dim && model.focusedScene != nil && model.focusedScene != scene.id ? 0.35 : 1)
@@ -224,7 +226,13 @@ struct StatusLine: View {
                 Text(model.focusedPage.map { "p. \($0) of \(model.pageCount)" } ?? "\(model.pageCount) \(model.pageCount == 1 ? "page" : "pages")")
             }
             Text("\(model.wordCount.formatted()) words")
-            if let start = model.sessionStartWords, model.wordCount != start {
+            if let today = model.wordsToday, UserDefaults.standard.integer(forKey: "dailyGoal") > 0 {
+                let goal = UserDefaults.standard.integer(forKey: "dailyGoal")
+                HStack(spacing: 5) {
+                    ProgressView(value: Double(min(max(today, 0), goal)), total: Double(goal)).progressViewStyle(.linear).frame(width: 40)
+                    Text("\(max(today, 0).formatted()) / \(goal.formatted()) today")
+                }
+            } else if let start = model.sessionStartWords, model.wordCount != start {
                 Text("\(model.wordCount - start > 0 ? "+" : "")\((model.wordCount - start).formatted()) this session")
             }
         }
@@ -485,11 +493,29 @@ struct SnapshotsSheet: View {
                 .frame(width: 230)
                 Rectangle().fill(Color(nsColor: Theme.line)).frame(width: 1)
                 ScrollView {
-                    Text(chosen.flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? (snaps.isEmpty ? "No snapshots yet. Scene › Take Snapshot (⌘5) saves one." : ""))
+                    let old = chosen.flatMap { try? String(contentsOf: $0, encoding: .utf8) }
+                    if model.snapshotCompare, let old, let id, let current = model.scenes.first(where: { $0.id == id })?.file.body {
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(Array(LineDiff.compare(old, current).enumerated()), id: \.offset) { _, change in
+                                switch change {
+                                case .same(let l): Text(l.isEmpty ? " " : l)
+                                case .removed(let l): Text(l.isEmpty ? " " : l).strikethrough().foregroundStyle(.red)
+                                        .frame(maxWidth: .infinity, alignment: .leading).background(.red.opacity(0.08))
+                                case .added(let l): Text(l.isEmpty ? " " : l).foregroundStyle(.green)
+                                        .frame(maxWidth: .infinity, alignment: .leading).background(.green.opacity(0.08))
+                                }
+                            }
+                        }
                         .font(.custom("Courier Prime", size: 13))
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(14)
-                        .textSelection(.enabled)
+                    } else {
+                        Text(old ?? (snaps.isEmpty ? "No snapshots yet. Scene › Take Snapshot (⌘5) saves one." : ""))
+                            .font(.custom("Courier Prime", size: 13))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(14)
+                            .textSelection(.enabled)
+                    }
                 }
                 .background(Color(nsColor: Theme.paper))
             }
@@ -497,6 +523,9 @@ struct SnapshotsSheet: View {
             .border(Color(nsColor: Theme.line))
             HStack {
                 Button("Take Snapshot Now") { if let id { model.takeSnapshot(id) } }
+                Toggle("Compare with current", isOn: Binding(get: { model.snapshotCompare }, set: { model.snapshotCompare = $0 }))
+                    .toggleStyle(.checkbox)
+                    .help("Removed lines in red, added lines in green")
                 Spacer()
                 Button("Close") { model.showSnapshots = false }.keyboardShortcut(.cancelAction)
                 Button("Restore") {
@@ -619,10 +648,22 @@ struct ScenePanel: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(title).font(.system(size: 12, weight: .semibold))
                 ForEach(items, id: \.name) { item in
-                    if let note = item.note {
-                        Button(item.name) { model.openFile(note) }.buttonStyle(.link).font(.system(size: 12))
-                    } else {
-                        Text(item.name).font(.system(size: 12)).foregroundStyle(.secondary)
+                    HStack {
+                        if let note = item.note {
+                            Button(item.name) { model.openFile(note) }.buttonStyle(.link).font(.system(size: 12))
+                        } else {
+                            Text(item.name).font(.system(size: 12)).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        if title == "Characters" {
+                            let on = model.highlightCharacter == item.name
+                            Button { model.highlightCharacter = on ? nil : item.name } label: {
+                                Image(systemName: on ? "highlighter" : "highlighter").foregroundStyle(on ? Color(nsColor: Theme.accent) : .secondary)
+                            }
+                            .buttonStyle(.borderless)
+                            .help(on ? "Stop highlighting \(item.name)" : "Highlight \(item.name)'s lines")
+                            .accessibilityLabel(on ? "Stop highlighting \(item.name)" : "Highlight \(item.name)")
+                        }
                     }
                 }
             }
@@ -661,5 +702,37 @@ struct TitlePageSheet: View {
 
     private func field(_ key: String) -> Binding<String> {
         Binding(get: { model.titleFields[key] ?? "" }, set: { model.titleFields[key] = $0 })
+    }
+}
+
+/// Jump to Scene (⌘J): type to filter by heading or synopsis, Return to go.
+struct JumpSheet: View {
+    @Environment(ProjectModel.self) private var model
+    var body: some View {
+        let results = model.jumpResults
+        VStack(spacing: 0) {
+            TextField("Jump to scene…", text: Binding(get: { model.jumpQuery }, set: { model.jumpQuery = $0 }))
+                .textFieldStyle(.plain).font(.system(size: 18))
+                .padding(14)
+                .onSubmit { if let first = results.first { model.jump(to: first.id) } }
+            Divider()
+            List(results) { s in
+                Button { model.jump(to: s.id) } label: {
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        Text("\((model.scenes.firstIndex { $0.id == s.id } ?? 0) + 1)").monospacedDigit().foregroundStyle(.secondary).frame(width: 24, alignment: .trailing)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(s.heading).font(.custom("Courier Prime", size: 13).bold())
+                            if !s.cardText.isEmpty { Text(s.cardText).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1) }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            .listStyle(.plain)
+            .frame(height: 320)
+        }
+        .frame(width: 520)
+        .onExitCommand { model.showJump = false }
     }
 }

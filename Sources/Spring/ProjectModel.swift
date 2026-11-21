@@ -816,4 +816,42 @@ final class ProjectModel {
         NSPasteboard.general.setString(text, forType: .string)
         showToast("Copied the whole script (\(scenes.count) scenes)")
     }
+
+    // MARK: Jump, compare, goals, highlight
+
+    var showJump = false
+    var jumpQuery = ""
+    var jumpResults: [SceneFile] {
+        let q = jumpQuery.trimmingCharacters(in: .whitespaces).lowercased()
+        return q.isEmpty ? scenes : scenes.filter { $0.heading.lowercased().contains(q) || $0.cardText.lowercased().contains(q) }
+    }
+
+    func jump(to id: UUID) {
+        showJump = false
+        jumpQuery = ""
+        viewMode = .script
+        focus(id, atEnd: false)
+        scrollTarget = id
+    }
+
+    var snapshotCompare = false
+
+    /// Words written today in this project (from the count when it was first opened today).
+    var wordsToday: Int? {
+        guard let root = projectURL else { return nil }
+        let key = Self.dayKey(root)
+        var starts = UserDefaults.standard.dictionary(forKey: "dayStartWords") as? [String: Int] ?? [:]
+        if starts[key] == nil {
+            starts = starts.filter { $0.key.hasPrefix(Self.today) }
+            starts[key] = wordCount
+            UserDefaults.standard.set(starts, forKey: "dayStartWords")
+        }
+        return wordCount - (starts[key] ?? wordCount)
+    }
+
+    static var today: String { Date.now.formatted(.iso8601.year().month().day()) }
+    static func dayKey(_ root: URL) -> String { today + "|" + root.path }
+
+    /// A character whose speeches are highlighted in the script.
+    var highlightCharacter: String?
 }

@@ -159,6 +159,7 @@ struct ScriptTextView: NSViewRepresentable {
     var focusRequest: ProjectModel.FocusRequest?
     var typewriter = false
     var dim = false
+    var highlight: String?
     /// Whole-line suggestions for (text before the cursor on this line, previous line is blank).
     var suggest: (String, Bool) -> [String] = { _, _ in [] }
 
@@ -202,6 +203,7 @@ struct ScriptTextView: NSViewRepresentable {
         }
         tv.insertionPointColor = Theme.accent
         if old.dim != dim { context.coordinator.applyDim(tv) }
+        if old.highlight != highlight { context.coordinator.restyle(tv) }
         // Focus handed over from the scene above or below (arrow keys), or from the scene list.
         if let r = focusRequest, r.id == sceneID, r.token != context.coordinator.handledFocus {
             context.coordinator.handledFocus = r.token
@@ -340,6 +342,17 @@ struct ScriptTextView: NSViewRepresentable {
             guard let storage = tv.textStorage else { return }
             let caret = tv.window?.firstResponder === tv ? tv.selectedRange().location : nil
             ScriptStyler.apply(to: storage, fontName: parent.fontName, fontSize: parent.fontSize, caret: caret)
+            if let name = parent.highlight {
+                // Highlight a character's speeches (cue through last line) with a wash of the accent.
+                let ns = tv.string as NSString
+                var starts: [Int] = [0]
+                for (i, ch) in tv.string.utf16.enumerated() where ch == 10 { starts.append(i + 1) }
+                for r in Fountain.speeches(by: name, in: tv.string) {
+                    let from = starts[r.lowerBound]
+                    let to = r.upperBound < starts.count ? starts[r.upperBound] : ns.length
+                    storage.addAttribute(.backgroundColor, value: Theme.accent.withAlphaComponent(0.13), range: NSRange(location: from, length: to - from))
+                }
+            }
             lastPair = pairIndex(tv)
             tv.typingAttributes = [.font: Theme.scriptFont(parent.fontName, parent.fontSize), .foregroundColor: NSColor.textColor]
         }
@@ -355,6 +368,39 @@ final class SceneTextView: NSTextView {
     var onNoteFromSelection: ((String) -> Void)?
 
     @objc func splitHere(_ sender: Any?) { onSplit?(selectedRange().location) }
+
+    /// Tab on a line with text makes it a character cue (capitals), as in Final Draft and Highland.
+    override func insertTab(_ sender: Any?) {
+        guard UserDefaults.standard.object(forKey: "tabMakesCue") as? Bool ?? true else { return super.insertTab(sender) }
+        let ns = string as NSString
+        let line = ns.lineRange(for: NSRange(location: selectedRange().location, length: 0))
+        let text = ns.substring(with: line)
+        let trimmed = text.trimmingCharacters(in: .newlines)
+        guard !trimmed.trimmingCharacters(in: .whitespaces).isEmpty, trimmed != trimmed.uppercased() else { return super.insertTab(sender) }
+        let range = NSRange(location: line.location, length: (trimmed as NSString).length)
+        if shouldChangeText(in: range, replacementString: trimmed.uppercased()) {
+            textStorage?.replaceCharacters(in: range, with: trimmed.uppercased())
+            didChangeText()
+            setSelectedRange(NSRange(location: range.location + range.length, length: 0))
+        }
+    }
+
+    /// Typing "(" at the start of a line inside a speech adds the ")" too, for a parenthetical.
+    override func insertText(_ string: Any, replacementRange: NSRange) {
+        guard let s = string as? String, s == "(", selectedRange().length == 0 else { return super.insertText(string, replacementRange: replacementRange) }
+        let ns = self.string as NSString
+        let loc = selectedRange().location
+        let lineStart = ns.lineRange(for: NSRange(location: loc, length: 0)).location
+        guard loc == lineStart, lineStart > 0 else { return super.insertText(string, replacementRange: replacementRange) }
+        let prevLine = ns.lineRange(for: NSRange(location: lineStart - 1, length: 0))
+        let kinds = Fountain.classify(ns.substring(to: lineStart) + "x")
+        let prevKind = kinds.count >= 2 ? kinds[kinds.count - 2] : .blank
+        guard [.character, .dialogue, .parenthetical].contains(prevKind), prevLine.length > 1 else {
+            return super.insertText(string, replacementRange: replacementRange)
+        }
+        super.insertText("()", replacementRange: replacementRange)
+        setSelectedRange(NSRange(location: loc + 1, length: 0))
+    }
 
     @objc func noteFromSelection(_ sender: Any?) {
         let r = selectedRange()

@@ -101,6 +101,8 @@ struct SpringApp: App {
                 Button("Corkboard") { model.viewMode = .cards }.keyboardShortcut("2")
                 Button(model.continuous ? "Show One Scene at a Time" : "Show Continuous Script") { model.continuous.toggle() }
                     .keyboardShortcut("3")
+                Button("Jump to Scene…") { model.showJump = true }.keyboardShortcut("j").disabled(model.projectURL == nil)
+                Button("Clear Highlight") { model.highlightCharacter = nil }.disabled(model.highlightCharacter == nil)
                 Button("Previous Scene") { step(-1) }.keyboardShortcut("[")
                 Button("Next Scene") { step(1) }.keyboardShortcut("]")
                 Button(model.focusMode ? "Leave Focus Mode" : "Focus Mode") { model.focusMode.toggle() }

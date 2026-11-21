@@ -398,5 +398,11 @@ let tpOut = TitlePageFile.text(tpf, updating: tpText)
 check(tpOut == "---\ntags: [x]\n---\nTitle: Bar\nCredit: Written by\nAuthor: Jo Bloggs\nContact:\n    jo@example.com\n    0123\nNotes: keep me\n", "title page written: \(tpOut)")
 check(SP.titlePage(tpOut).centre.map(\.text).contains("Jo Bloggs"), "PDF title page reads the form's output")
 
+// Diff and speeches
+check(LineDiff.compare("a\nb\nc", "a\nB\nc\nd") == [.same("a"), .removed("b"), .added("B"), .same("c"), .added("d")], "line diff: \(LineDiff.compare("a\nb\nc", "a\nB\nc\nd"))")
+check(LineDiff.compare("same", "same") == [.same("same")], "no change")
+let sp2 = Fountain.speeches(by: "billy", in: "INT. A\n\nBILLY\nHi.\n(beat)\nThere.\n\nSARAH\nNo.\n\nBILLY (V.O.)\nYes.")
+check(sp2 == [2..<6, 10..<12], "speeches: \(sp2)")
+
 try? FileManager.default.removeItem(at: dir)
 print("SpringChecks: all passed")
