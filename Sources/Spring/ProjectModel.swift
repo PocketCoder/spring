@@ -1,0 +1,119 @@
+import AppKit
+import Observation
+import SpringCore
+
+@MainActor @Observable
+final class ProjectModel {
+    var projectURL: URL?
+    var scenes: [SceneFile] = []
+    var conflicts: Set<UUID> = []
+    var errorMessage: String?
+    var marker: FountainMarker = .tag
+    var sceneListHovered = false
+
+    @ObservationIgnored private var pending: [UUID: Task<Void, Never>] = [:]
+    @ObservationIgnored private var scopedURL: URL?
+    private static let bookmarkKey = "lastProjectBookmark"
+
+    init() {
+        NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.saveAll() }
+        }
+    }
+
+    // MARK: Opening
+
+    func chooseProject() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.prompt = "Open Project"
+        panel.message = "Choose a project folder that contains a Scenes folder."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        if let data = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil) {
+            UserDefaults.standard.set(data, forKey: Self.bookmarkKey)
+        }
+        open(url)
+    }
+
+    func restoreLastProject() {
+        // Dev convenience: `swift run Spring /path/to/project` (unsandboxed builds only).
+        if let path = CommandLine.arguments.dropFirst().first(where: { !$0.hasPrefix("-") }) {
+            return open(URL(filePath: path, directoryHint: .isDirectory))
+        }
+        guard projectURL == nil, let data = UserDefaults.standard.data(forKey: Self.bookmarkKey) else { return }
+        var stale = false
+        guard let url = try? URL(resolvingBookmarkData: data, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &stale) else { return }
+        open(url)
+    }
+
+    func open(_ url: URL) {
+        saveAll()
+        scopedURL?.stopAccessingSecurityScopedResource()
+        scopedURL = url.startAccessingSecurityScopedResource() ? url : nil
+        do {
+            scenes = try ProjectIO.loadScenes(in: url)
+            projectURL = url
+            conflicts = []
+            errorMessage = nil
+        } catch {
+            errorMessage = "Couldn't open \(url.lastPathComponent): \(error.localizedDescription)"
+        }
+    }
+
+    // MARK: Editing and saving
+
+    func body(of id: UUID) -> String { scenes.first { $0.id == id }?.file.body ?? "" }
+
+    func update(_ id: UUID, body: String) {
+        guard let i = scenes.firstIndex(where: { $0.id == id }), scenes[i].file.body != body else { return }
+        scenes[i].file.body = body
+        pending[id]?.cancel()
+        pending[id] = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled else { return }
+            self?.save(id)
+        }
+    }
+
+    func save(_ id: UUID) {
+        pending[id] = nil
+        guard let i = scenes.firstIndex(where: { $0.id == id }), !conflicts.contains(id) else { return }
+        var scene = scenes[i]
+        do {
+            switch try ProjectIO.save(&scene, number: i + 1, marker: marker) {
+            case .saved: scenes[i] = scene
+            case .conflict: conflicts.insert(id)
+            }
+        } catch {
+            errorMessage = "Couldn't save \(scene.url.lastPathComponent): \(error.localizedDescription)"
+        }
+    }
+
+    func saveAll() {
+        for (id, task) in pending { task.cancel(); save(id) }
+    }
+
+    /// Conflict: overwrite the file on disk with Spring's version.
+    func keepMine(_ id: UUID) {
+        guard let i = scenes.firstIndex(where: { $0.id == id }) else { return }
+        scenes[i].knownModDate = nil
+        conflicts.remove(id)
+        save(id)
+    }
+
+    /// Conflict: drop Spring's edits and load the file from disk.
+    func reload(_ id: UUID) {
+        guard let i = scenes.firstIndex(where: { $0.id == id }) else { return }
+        pending[id]?.cancel()
+        pending[id] = nil
+        do {
+            let fresh = try ProjectIO.read(scenes[i].url)
+            scenes[i].file = fresh.file
+            scenes[i].knownModDate = fresh.knownModDate
+            conflicts.remove(id)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+}

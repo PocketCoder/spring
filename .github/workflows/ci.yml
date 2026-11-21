@@ -1,0 +1,118 @@
+name: CI
+
+# One workflow for everything:
+#   check     every push and pull request: build, run SpringChecks, bundle the app and make sure it launches
+#   nightly   push to main: replaces the rolling `nightly` pre-release with a universal, ad-hoc signed build
+#   release   tag v*: a versioned release with the same build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+permissions:
+  contents: read
+
+# A newer pull request push supersedes the older run; pushes to main finish (they may be publishing).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    name: Build, check and bundle
+    runs-on: macos-latest
+    timeout-minutes: 30
+    env:
+      PUBLISH: ${{ github.event_name == 'push' }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Toolchain
+        run: |
+          sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          swift --version
+
+      - name: Build
+        run: swift build
+
+      - name: SpringChecks
+        run: swift run SpringChecks
+
+      - name: Bundle Spring.app
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="0.0.0-nightly.${{ github.run_number }}"
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          UNIVERSAL=1 BUILD_NUMBER=${{ github.run_number }} scripts/bundle.sh "$version"
+
+      # A build that cannot start must never be published: launch it for a few seconds and fail on a dyld error.
+      - name: Launch check
+        run: |
+          set -u
+          build/Spring.app/Contents/MacOS/Spring >launch.log 2>&1 &
+          pid=$!
+          sleep 8
+          kill "$pid" 2>/dev/null || true
+          wait "$pid" 2>/dev/null || true
+          cat launch.log
+          if grep -qiE "Library not loaded|dyld\[|Symbol not found" launch.log; then
+            echo "::error::Spring failed to load at launch"
+            exit 1
+          fi
+
+      - name: Package zip
+        if: env.PUBLISH == 'true'
+        run: |
+          mkdir -p out
+          ditto -c -k --keepParent build/Spring.app "out/Spring-$VERSION-macOS.zip"
+
+      - uses: actions/upload-artifact@v7
+        if: env.PUBLISH == 'true'
+        with:
+          name: spring-macos
+          path: out/*
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish
+    needs: check
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: spring-macos
+          path: out
+
+      - name: Nightly (rolling pre-release)
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release delete nightly --cleanup-tag --yes || true
+          gh release create nightly out/* --prerelease --target "$GITHUB_SHA" \
+            --title "Spring nightly" \
+            --notes "Built from ${GITHUB_SHA::7}. Ad-hoc signed: right-click the app and choose Open the first time."
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release create "$GITHUB_REF_NAME" out/* --title "Spring $GITHUB_REF_NAME" --generate-notes
