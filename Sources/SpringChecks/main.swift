@@ -131,5 +131,20 @@ let moved2 = try ProjectIO.bury(file: proj.appending(path: "Scenes/Untitled scen
 check(moved.path.contains("/Graveyard/Untitled scene.fountain.md") && moved2.lastPathComponent == "Untitled scene 2.fountain.md", "file buried without overwriting")
 _ = bar
 
+// Binder tree and plain notes
+try "Billy".write(to: proj.appending(path: "Characters/BILLY (M24) - Shopkeeper.md"), atomically: true, encoding: .utf8)
+try "x".write(to: proj.appending(path: "Characters/photo.png"), atomically: true, encoding: .utf8)
+let tree = ProjectIO.tree(at: proj)
+check(tree.prefix(2).map(\.name) == ["front-matter", "Logline"], "files first: \(tree.map(\.name))")
+check(tree.dropFirst(2).map(\.name).prefix(3) == ["Scenes", "Characters", "Locations"], "folders in project order")
+let chars = tree.first { $0.name == "Characters" }?.children ?? []
+check(chars.map(\.name) == ["BILLY (M24) - Shopkeeper"] && chars[0].children == nil, "only text files, no arrow on files")
+let noteURL = try ProjectIO.newNote(in: proj.appending(path: "Notes"))
+var raw = try ProjectIO.readRaw(noteURL)
+raw.file.body = "---\ntags: [x]\n---\nIdea"
+check(try ProjectIO.write(&raw) == .saved(renamedFrom: nil), "note saved")
+check(try String(contentsOf: noteURL, encoding: .utf8) == "---\ntags: [x]\n---\nIdea", "raw text written as is")
+check(try ProjectIO.newNote(in: proj.appending(path: "Notes")).lastPathComponent == "Untitled 2.md", "new note numbered")
+
 try? FileManager.default.removeItem(at: dir)
 print("SpringChecks: all passed")

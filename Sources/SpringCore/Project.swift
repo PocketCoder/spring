@@ -238,3 +238,58 @@ extension ProjectIO {
         return target
     }
 }
+
+// MARK: Binder tree and plain files
+
+public struct FileNode: Identifiable, Hashable, Sendable {
+    public var id: URL { url }
+    public let url: URL
+    public let isFolder: Bool
+    /// nil for files, so SwiftUI's OutlineGroup shows no disclosure arrow.
+    public var children: [FileNode]?
+    public var name: String { isFolder ? url.lastPathComponent : ProjectIO.stem(of: url) }
+}
+
+extension ProjectIO {
+    static let binderExtensions = ["md", "fountain", "txt", "canvas"]
+
+    /// Files and folders under `root`: top-level files first, then folders in `folderOrder`, then the rest A–Z.
+    public static func tree(at root: URL, folderOrder: [String] = defaultFolders) -> [FileNode] {
+        let fm = FileManager.default
+        guard let items = try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: [.isDirectoryKey], options: .skipsHiddenFiles) else { return [] }
+        let nodes: [FileNode] = items.compactMap { url in
+            let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+            if isDir { return FileNode(url: url, isFolder: true, children: tree(at: url, folderOrder: [])) }
+            return binderExtensions.contains(url.pathExtension.lowercased()) ? FileNode(url: url, isFolder: false) : nil
+        }
+        func rank(_ n: FileNode) -> Int {
+            if !n.isFolder { return -1 }
+            return folderOrder.firstIndex(of: n.url.lastPathComponent) ?? folderOrder.count
+        }
+        return nodes.sorted { (rank($0), $0.name.localizedLowercase) < (rank($1), $1.name.localizedLowercase) }
+    }
+
+    /// Writes a file as is (no scene number, marker or rename), refusing if it changed on disk.
+    public static func write(_ file: inout SceneFile) throws -> SaveResult {
+        if let disk = modDate(file.url), let known = file.knownModDate, disk > known { return .conflict }
+        try file.diskText.write(to: file.url, atomically: true, encoding: .utf8)
+        file.knownModDate = modDate(file.url)
+        return .saved(renamedFrom: nil)
+    }
+
+    /// A plain file opened as raw text (frontmatter included), for the note editor.
+    public static func readRaw(_ url: URL) throws -> SceneFile {
+        var f = SceneFile(url: url, file: MarkdownFile(text: ""), knownModDate: modDate(url))
+        f.file.body = try String(contentsOf: url, encoding: .utf8)
+        return f
+    }
+
+    /// `Untitled.md` (numbered if taken) in `folder`.
+    public static func newNote(in folder: URL) throws -> URL {
+        var url = folder.appending(path: "Untitled.md")
+        var n = 2
+        while FileManager.default.fileExists(atPath: url.path) { url = folder.appending(path: "Untitled \(n).md"); n += 1 }
+        try "".write(to: url, atomically: true, encoding: .utf8)
+        return url
+    }
+}

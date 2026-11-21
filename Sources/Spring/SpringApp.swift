@@ -46,6 +46,8 @@ struct SpringApp: App {
             CommandGroup(before: .sidebar) {
                 Button("Script") { model.viewMode = .script }.keyboardShortcut("1")
                 Button("Corkboard") { model.viewMode = .cards }.keyboardShortcut("2")
+                Button("Binder") { model.binder = model.binder == .detailOnly ? .all : .detailOnly }
+                    .keyboardShortcut("b", modifiers: [.command, .control])
                 Divider()
             }
             CommandGroup(replacing: .saveItem) {

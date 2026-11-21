@@ -9,8 +9,17 @@ struct ContentView: View {
     var body: some View {
         Group {
             if model.projectURL == nil { WelcomeView() }
-            else if model.viewMode == .cards { CorkboardView() }
-            else { editor }
+            else {
+                NavigationSplitView(columnVisibility: Binding(get: { model.binder }, set: { model.binder = $0 })) {
+                    BinderView().navigationSplitViewColumnWidth(min: 200, ideal: 260, max: 380)
+                } detail: {
+                    switch model.viewMode {
+                    case .cards: CorkboardView()
+                    case .note: NoteView()
+                    case .script: editor
+                    }
+                }
+            }
         }
         .toolbar {
             if model.projectURL != nil {
@@ -37,7 +46,7 @@ struct ContentView: View {
     private var editor: some View {
         ScrollViewReader { proxy in
             HStack(alignment: .top, spacing: 0) {
-                SceneList(proxy: proxy)
+                if model.binder == .detailOnly { SceneList(proxy: proxy) }
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         ForEach(Array(model.scenes.enumerated()), id: \.element.id) { i, scene in

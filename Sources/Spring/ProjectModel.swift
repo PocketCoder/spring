@@ -1,5 +1,6 @@
 import AppKit
 import Observation
+import SwiftUI
 import SpringCore
 
 @MainActor @Observable
@@ -17,7 +18,7 @@ final class ProjectModel {
 
     init() {
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.saveAll() }
+            MainActor.assumeIsolated { self?.saveAll(); self?.saveNote() }
         }
     }
 
@@ -53,6 +54,9 @@ final class ProjectModel {
         scopedURL = url.startAccessingSecurityScopedResource() ? url : nil
         do {
             scenes = try ProjectIO.loadScenes(in: url)
+            note = nil
+            viewMode = .script
+            tree = ProjectIO.tree(at: url, folderOrder: Prefs.projectFolders)
             projectURL = url
             conflicts = []
             errorMessage = nil
@@ -79,7 +83,7 @@ final class ProjectModel {
 
     // MARK: Corkboard
 
-    enum ViewMode { case script, cards }
+    enum ViewMode { case script, cards, note }
     var viewMode: ViewMode = .script
     var selected: UUID?
     var dropTarget: UUID?
@@ -119,7 +123,10 @@ final class ProjectModel {
             switch try ProjectIO.save(&scene, number: i + 1, marker: marker, rename: rename) {
             case .saved(let oldURL):
                 scenes[i] = scene
-                if let oldURL, let root = projectURL { ProjectIO.updateLinks(under: root, from: oldURL, to: scene.url) }
+                if let oldURL, let root = projectURL {
+                    ProjectIO.updateLinks(under: root, from: oldURL, to: scene.url)
+                    refreshTree()
+                }
             case .conflict: conflicts.insert(id)
             }
         } catch {
@@ -191,6 +198,7 @@ final class ProjectModel {
             scenes.append(scene)
             save(scene.id, rename: false)
             openInScript(scene.id)
+            refreshTree()
         } catch {
             errorMessage = "Couldn't create a scene: \(error.localizedDescription)"
         }
@@ -199,7 +207,7 @@ final class ProjectModel {
     /// Selected text, already cut from the scene, goes to Graveyard/<heading>.md.
     func bury(_ text: String, from id: UUID) {
         guard let root = projectURL, let scene = scenes.first(where: { $0.id == id }) else { return }
-        do { try ProjectIO.bury(text, from: scene, in: root) } catch {
+        do { try ProjectIO.bury(text, from: scene, in: root); refreshTree() } catch {
             errorMessage = "Couldn't write to the Graveyard: \(error.localizedDescription)"
         }
     }
@@ -214,8 +222,84 @@ final class ProjectModel {
             pending[id] = nil
             if selected == id { selected = nil }
             for (n, s) in scenes.enumerated() where s.number != n + 1 { save(s.id, rename: false) }
+            refreshTree()
         } catch {
             errorMessage = "Couldn't move the scene to the Graveyard: \(error.localizedDescription)"
         }
+    }
+
+    // MARK: Binder and notes
+
+    var binder: NavigationSplitViewVisibility = .detailOnly
+    var tree: [FileNode] = []
+    /// A non-scene file open in the note editor (raw text, frontmatter included).
+    var note: SceneFile?
+    var noteConflict = false
+    @ObservationIgnored private var noteSave: Task<Void, Never>?
+
+    func refreshTree() {
+        if let root = projectURL { tree = ProjectIO.tree(at: root, folderOrder: Prefs.projectFolders) }
+    }
+
+    func openFile(_ url: URL) {
+        if let scene = scenes.first(where: { $0.url == url }) { return openInScript(scene.id) }
+        guard url.pathExtension.lowercased() != "canvas" else { NSWorkspace.shared.open(url); return }
+        saveNote()
+        do {
+            note = try ProjectIO.readRaw(url)
+            noteConflict = false
+            viewMode = .note
+        } catch {
+            errorMessage = "Couldn't open \(url.lastPathComponent): \(error.localizedDescription)"
+        }
+    }
+
+    func updateNote(_ text: String) {
+        guard note != nil, note?.file.body != text else { return }
+        note?.file.body = text
+        noteSave?.cancel()
+        noteSave = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled else { return }
+            self?.saveNote()
+        }
+    }
+
+    func saveNote(force: Bool = false) {
+        noteSave?.cancel()
+        noteSave = nil
+        guard var n = note, !noteConflict || force else { return }
+        if force { n.knownModDate = nil }
+        do {
+            if try ProjectIO.write(&n) == .conflict { noteConflict = true } else { note = n; noteConflict = false }
+        } catch {
+            errorMessage = "Couldn't save \(n.url.lastPathComponent): \(error.localizedDescription)"
+        }
+    }
+
+    func reloadNote() {
+        guard let url = note?.url else { return }
+        noteConflict = false
+        note = try? ProjectIO.readRaw(url)
+    }
+
+    func newNote(in folder: URL) {
+        do {
+            let url = try ProjectIO.newNote(in: folder)
+            refreshTree()
+            openFile(url)
+        } catch {
+            errorMessage = "Couldn't create a note: \(error.localizedDescription)"
+        }
+    }
+
+    func buryFile(_ url: URL) {
+        if let scene = scenes.first(where: { $0.url == url }) { return buryScene(scene.id) }
+        guard let root = projectURL else { return }
+        if note?.url == url { note = nil; viewMode = .script }
+        do { _ = try ProjectIO.bury(file: url, in: root) } catch {
+            errorMessage = "Couldn't move \(url.lastPathComponent) to the Graveyard: \(error.localizedDescription)"
+        }
+        refreshTree()
     }
 }
