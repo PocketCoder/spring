@@ -115,6 +115,8 @@ struct ScriptTextView: NSViewRepresentable {
     var onBury: (String) -> (() -> Void) = { _ in {} }
     /// Arrow up off the first line (true) or down off the last (false). Returns true when another scene took focus.
     var onLeave: (Bool) -> Bool = { _ in false }
+    var onSplit: (Int) -> Void = { _ in }
+    var onNoteFromSelection: (String) -> Void = { _ in }
     var focusRequest: ProjectModel.FocusRequest?
     var typewriter = false
     var dim = false
@@ -127,6 +129,8 @@ struct ScriptTextView: NSViewRepresentable {
         let tv = SceneTextView(usingTextLayoutManager: false)
         tv.onBury = { [weak coordinator = context.coordinator] in coordinator?.parent.onBury($0) ?? {} }
         tv.onLeave = { [weak coordinator = context.coordinator] in coordinator?.parent.onLeave($0) ?? false }
+        tv.onSplit = { [weak coordinator = context.coordinator] in coordinator?.parent.onSplit($0) }
+        tv.onNoteFromSelection = { [weak coordinator = context.coordinator] in coordinator?.parent.onNoteFromSelection($0) }
         tv.isRichText = false
         tv.allowsUndo = true
         tv.drawsBackground = false
@@ -281,11 +285,15 @@ struct ScriptTextView: NSViewRepresentable {
         }
 
         func textView(_ view: NSTextView, menu: NSMenu, for event: NSEvent, at charIndex: Int) -> NSMenu? {
-            guard view.selectedRange().length > 0 else { return menu }
-            let item = NSMenuItem(title: "Send to Graveyard", action: #selector(SceneTextView.sendToGraveyard(_:)), keyEquivalent: "")
-            item.target = view
-            menu.insertItem(item, at: 0)
-            menu.insertItem(.separator(), at: 1)
+            var items: [NSMenuItem] = []
+            if view.selectedRange().length > 0 {
+                items.append(NSMenuItem(title: "Send to Graveyard", action: #selector(SceneTextView.sendToGraveyard(_:)), keyEquivalent: ""))
+                items.append(NSMenuItem(title: "New Note from Selection…", action: #selector(SceneTextView.noteFromSelection(_:)), keyEquivalent: ""))
+            } else {
+                items.append(NSMenuItem(title: "Split Scene Here", action: #selector(SceneTextView.splitHere(_:)), keyEquivalent: ""))
+            }
+            for (n, item) in items.enumerated() { item.target = view; menu.insertItem(item, at: n) }
+            menu.insertItem(.separator(), at: items.count)
             return menu
         }
 
@@ -304,6 +312,16 @@ struct ScriptTextView: NSViewRepresentable {
 final class SceneTextView: NSTextView {
     var onBury: ((String) -> (() -> Void))?
     var onLeave: ((Bool) -> Bool)?
+    var onSplit: ((Int) -> Void)?
+    var onNoteFromSelection: ((String) -> Void)?
+
+    @objc func splitHere(_ sender: Any?) { onSplit?(selectedRange().location) }
+
+    @objc func noteFromSelection(_ sender: Any?) {
+        let r = selectedRange()
+        guard r.length > 0 else { return }
+        onNoteFromSelection?((string as NSString).substring(with: r))
+    }
 
     /// The line fragment the caret is on, in text view coordinates.
     func caretLineRect() -> NSRect? {

@@ -23,6 +23,8 @@ struct ContentView: View {
                     }
                 }
                 .toolbar { toolbar }
+                .sheet(isPresented: Binding(get: { model.showSnapshots }, set: { model.showSnapshots = $0 })) { SnapshotsSheet() }
+                .sheet(isPresented: Binding(get: { model.showReport }, set: { model.showReport = $0 })) { ReportSheet() }
                 .inspector(isPresented: Binding(get: { model.showFind }, set: { model.showFind = $0 })) {
                     FindPanel().inspectorColumnWidth(min: 260, ideal: 300, max: 420)
                 }
@@ -102,6 +104,8 @@ struct ContentView: View {
                                 onBeginEditing: { model.focusedScene = scene.id },
                                 onBury: { model.bury($0, from: scene.id) },
                                 onLeave: { model.leave(scene.id, up: $0) },
+                                onSplit: { model.splitScene(scene.id, at: $0) },
+                                onNoteFromSelection: { text in model.projectURL.map { model.newNote(in: $0.appending(path: "Notes"), text: text) } },
                                 focusRequest: model.focusRequest,
                                 typewriter: typewriter,
                                 dim: dim,
@@ -214,6 +218,9 @@ struct StatusLine: View {
                 Text(model.focusedPage.map { "p. \($0) of \(model.pageCount)" } ?? "\(model.pageCount) \(model.pageCount == 1 ? "page" : "pages")")
             }
             Text("\(model.wordCount.formatted()) words")
+            if let start = model.sessionStartWords, model.wordCount != start {
+                Text("\(model.wordCount - start > 0 ? "+" : "")\((model.wordCount - start).formatted()) this session")
+            }
         }
         .font(.system(size: 11))
         .foregroundStyle(.tertiary)
@@ -453,5 +460,97 @@ struct FindPanel: View {
         }
         .padding(14)
         .background(Color(nsColor: Theme.paper2))
+    }
+}
+
+/// Snapshots of the current scene: list on the left, the text on the right, Restore.
+struct SnapshotsSheet: View {
+    @Environment(ProjectModel.self) private var model
+    var body: some View {
+        let id = model.currentScene
+        let snaps = id.map(model.snapshots) ?? []
+        let chosen = model.snapshotSelection ?? snaps.first
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Snapshots of \(id.flatMap { i in model.scenes.first { $0.id == i }?.heading } ?? "this scene")").font(.headline)
+            HStack(spacing: 0) {
+                List(snaps, id: \.self, selection: Binding(get: { chosen }, set: { model.snapshotSelection = $0 })) { url in
+                    Text(url.deletingPathExtension().lastPathComponent).font(.system(size: 12))
+                }
+                .frame(width: 230)
+                Rectangle().fill(Color(nsColor: Theme.line)).frame(width: 1)
+                ScrollView {
+                    Text(chosen.flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? (snaps.isEmpty ? "No snapshots yet. Scene › Take Snapshot (⌘5) saves one." : ""))
+                        .font(.custom("Courier Prime", size: 13))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(14)
+                        .textSelection(.enabled)
+                }
+                .background(Color(nsColor: Theme.paper))
+            }
+            .frame(height: 360)
+            .border(Color(nsColor: Theme.line))
+            HStack {
+                Button("Take Snapshot Now") { if let id { model.takeSnapshot(id) } }
+                Spacer()
+                Button("Close") { model.showSnapshots = false }.keyboardShortcut(.cancelAction)
+                Button("Restore") {
+                    if let id, let chosen { model.restoreSnapshot(chosen, into: id); model.showSnapshots = false }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(chosen == nil)
+            }
+        }
+        .padding(20)
+        .frame(width: 760)
+    }
+}
+
+/// Counts for the whole script: scenes, pages, interior/exterior, day/night, who speaks most, where it happens.
+struct ReportSheet: View {
+    @Environment(ProjectModel.self) private var model
+    var body: some View {
+        let r = ScriptReport(bodies: model.scenes.map(\.file.body))
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Script Report").font(.headline)
+            HStack(spacing: 28) {
+                stat("\(model.pageCount)", "pages")
+                stat("\(r.scenes)", "scenes")
+                stat(r.words.formatted(), "words")
+                stat("\(r.interior) / \(r.exterior)", "INT / EXT")
+                stat("\(r.day) / \(r.night)", "day / night")
+            }
+            HStack(alignment: .top, spacing: 24) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("CHARACTERS").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                    Table(r.speakers.map { Row(a: $0.name, b: $0.speeches, c: $0.words, d: $0.scenes) }) {
+                        TableColumn("Name", value: \.a)
+                        TableColumn("Speeches") { Text("\($0.b)").monospacedDigit() }
+                        TableColumn("Words") { Text("\($0.c)").monospacedDigit() }
+                        TableColumn("Scenes") { Text("\($0.d)").monospacedDigit() }
+                    }
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("LOCATIONS").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                    Table(r.places.map { Row(a: $0.name, b: $0.scenes, c: 0, d: 0) }) {
+                        TableColumn("Location", value: \.a)
+                        TableColumn("Scenes") { Text("\($0.b)").monospacedDigit() }
+                    }
+                    .frame(width: 260)
+                }
+            }
+            .frame(height: 320)
+            HStack { Spacer(); Button("Done") { model.showReport = false }.keyboardShortcut(.defaultAction) }
+        }
+        .padding(20)
+        .frame(width: 760)
+    }
+
+    struct Row: Identifiable { let id = UUID(); let a: String; let b: Int; let c: Int; let d: Int }
+
+    private func stat(_ value: String, _ label: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(value).font(.system(size: 20, weight: .semibold)).monospacedDigit()
+            Text(label).font(.system(size: 11)).foregroundStyle(.secondary)
+        }
     }
 }

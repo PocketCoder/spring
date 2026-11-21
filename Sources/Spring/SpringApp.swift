@@ -55,13 +55,31 @@ struct SpringApp: App {
                     .disabled(!canUpdate)
             }
             CommandGroup(replacing: .newItem) {
-                Button("New Scene") { model.newScene() }.keyboardShortcut("n").disabled(model.projectURL == nil)
                 Button("New Project…") { model.newProject() }.keyboardShortcut("n", modifiers: [.command, .shift])
                 Button("Open Project…") { model.chooseProject() }.keyboardShortcut("o")
             }
             CommandGroup(after: .textEditing) {
                 Button("Find in Script…") { model.showFind = true }.keyboardShortcut("f", modifiers: [.command, .shift])
                     .disabled(model.projectURL == nil)
+            }
+            CommandMenu("Scene") {
+                Button("New Scene") { model.newScene() }.keyboardShortcut("n").disabled(model.projectURL == nil)
+                Button("Split Scene at Cursor") { NSApp.sendAction(#selector(SceneTextView.splitHere(_:)), to: nil, from: nil) }
+                    .keyboardShortcut("k")
+                Button("Merge with Next Scene") { if let id = model.currentScene { model.mergeWithNext(id) } }
+                Divider()
+                Button("Move Scene Up") { if let id = model.currentScene { model.moveScene(id, by: -1) } }
+                    .keyboardShortcut(.upArrow, modifiers: [.command, .control])
+                Button("Move Scene Down") { if let id = model.currentScene { model.moveScene(id, by: 1) } }
+                    .keyboardShortcut(.downArrow, modifiers: [.command, .control])
+                Divider()
+                Button("Take Snapshot") { if let id = model.currentScene { model.takeSnapshot(id) } }.keyboardShortcut("5")
+                Button("Snapshots…") { model.snapshotSelection = nil; model.showSnapshots = true }
+                    .keyboardShortcut("5", modifiers: [.command, .shift])
+                Divider()
+                Button("Send Scene to Graveyard") { if let id = model.currentScene { model.buryScene(id) } }
+                Divider()
+                Button("Script Report") { model.showReport = true }.keyboardShortcut("r", modifiers: [.command, .option])
             }
             CommandGroup(replacing: .printItem) {
                 Button("Print…") { model.printScript() }.keyboardShortcut("p").disabled(model.projectURL == nil)

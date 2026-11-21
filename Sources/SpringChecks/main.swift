@@ -362,5 +362,32 @@ check(Search.replaceAll("billy", with: "Bill $1", in: "billy and Billy", wholeWo
 let cues = "INT. A\n\nBILLY\nHi.\n\nBILLY (V.O.)\nThere.\n\nSARAH\nBilly?\n\nBILLY ^\nYes."
 check(Search.renameCharacter("Billy", to: "William", in: cues) == "INT. A\n\nWILLIAM\nHi.\n\nWILLIAM (V.O.)\nThere.\n\nSARAH\nBilly?\n\nWILLIAM ^\nYes.", "rename character cues only")
 
+// Rename made in Obsidian while Spring has unsaved edits: follow the file
+var follow = try ProjectIO.loadScenes(in: sp)
+let editedID = follow[0].id
+follow[0].file.body = "INT. A EDITED IN SPRING\n"
+try FileManager.default.moveItem(at: follow[0].url, to: sd.appending(path: "renamed in obsidian.fountain.md"))
+let fr = ProjectIO.sync(follow, dirty: [editedID], conflicts: [], in: sp)
+let followed = fr.scenes.first { $0.id == editedID }
+check(followed?.url.lastPathComponent == "renamed in obsidian.fountain.md" && followed?.heading == "INT. A EDITED IN SPRING" && fr.conflicts.isEmpty,
+      "unsaved scene follows a rename made elsewhere")
+check(fr.scenes.count == follow.count, "no duplicate after a rename elsewhere")
+
+// Split, snapshots, report
+let (first, second) = ProjectIO.split("INT. A\n\nOne.\n\nINT. B\n\nTwo.\n", at: 14)
+check(first == "INT. A\n\nOne.\n" && second == "INT. B\n\nTwo.\n", "split: \(first.debugDescription) | \(second.debugDescription)")
+let snapScene = SceneFile(url: sd.appending(path: "c.fountain.md"), file: MarkdownFile(text: "INT. C\n\nVersion one.\n"))
+let snap1 = try ProjectIO.snapshot(snapScene, in: sp, title: "before rewrite", date: Date(timeIntervalSince1970: 0))
+try ProjectIO.snapshot(snapScene, in: sp, date: Date(timeIntervalSince1970: 3600))
+let snaps = ProjectIO.snapshots(for: snapScene.url, in: sp)
+check(snaps.count == 2 && snaps[1].lastPathComponent == snap1.lastPathComponent && snap1.path.contains("/.spring/snapshots/c/"), "snapshots newest first, hidden folder")
+check(ProjectIO.tree(at: sp).allSatisfy { $0.name != ".spring" }, "snapshots don't show in the binder")
+ProjectIO.moveSnapshots(from: snapScene.url, to: sd.appending(path: "INT. C.fountain.md"), in: sp)
+check(ProjectIO.snapshots(for: sd.appending(path: "INT. C.fountain.md"), in: sp).count == 2, "snapshots follow a rename")
+let report = ScriptReport(bodies: ["INT. BAR - NIGHT\n\nBILLY\nOne two three.\n\nSARAH\nFour.\n\nBILLY (V.O.)\nFive six.", "EXT. BAR - DAY\n\nBILLY\nSeven."])
+check(report.scenes == 2 && report.interior == 1 && report.exterior == 1 && report.night == 1 && report.day == 1, "report counts")
+check(report.speakers.first?.name == "BILLY" && report.speakers.first?.speeches == 3 && report.speakers.first?.words == 6 && report.speakers.first?.scenes == 2, "report speakers")
+check(report.places.first?.name == "BAR" && report.places.first?.scenes == 2, "report places")
+
 try? FileManager.default.removeItem(at: dir)
 print("SpringChecks: all passed")

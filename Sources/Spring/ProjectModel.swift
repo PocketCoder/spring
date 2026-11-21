@@ -61,6 +61,8 @@ final class ProjectModel {
             viewMode = .script
             tree = ProjectIO.tree(at: url, folderOrder: Prefs.projectFolders)
             loadBoard()
+            sessionStartWords = wordCount
+            updatePages()
             watcher = FolderWatcher(url) { [weak self] in self?.syncWithDisk() }
             projectURL = url
             conflicts = []
@@ -131,6 +133,7 @@ final class ProjectModel {
                 updatePages()
                 if let oldURL, let root = projectURL {
                     ProjectIO.updateLinks(under: vaultContaining(root) ?? root, from: oldURL, to: scene.url)
+                    ProjectIO.moveSnapshots(from: oldURL, to: scene.url, in: root)
                     refreshTree()
                 }
             case .conflict: conflicts.insert(id)
@@ -198,13 +201,16 @@ final class ProjectModel {
         }
     }
 
-    func newScene() {
+    /// A new scene straight after the one you're in (or at the end), or with the given text (when splitting).
+    func newScene(text: String? = nil) {
         guard let root = projectURL else { return }
         do {
-            let scene = try ProjectIO.newScene(in: root, ext: Prefs.saveExt, template: templateText(Prefs.templateScene, title: "Untitled scene"))
-            scenes.append(scene)
-            save(scene.id, rename: false)
+            let scene = try ProjectIO.newScene(in: root, ext: Prefs.saveExt, template: text ?? templateText(Prefs.templateScene, title: "Untitled scene"))
+            let at = focusedScene.flatMap { id in scenes.firstIndex { $0.id == id } }.map { $0 + 1 } ?? scenes.endIndex
+            scenes.insert(scene, at: at)
+            for (n, s) in scenes.enumerated() where s.number != n + 1 || s.id == scene.id { save(s.id, rename: Prefs.naming == .numbered) }
             openInScript(scene.id)
+            focus(scene.id, atEnd: false)
             refreshTree()
         } catch {
             errorMessage = "Couldn't create a scene: \(error.localizedDescription)"
@@ -306,7 +312,7 @@ final class ProjectModel {
         note = try? ProjectIO.readRaw(url)
     }
 
-    func newNote(in folder: URL) {
+    func newNote(in folder: URL, text: String? = nil) {
         do {
             let key = switch folder.lastPathComponent {
             case "Characters": Prefs.templateCharacter
@@ -315,7 +321,7 @@ final class ProjectModel {
             }
             let prompt = folder.lastPathComponent == "Characters" ? "New character (e.g. BILLY (M24) - Shopkeeper)" : "New note in \(folder.lastPathComponent)"
             guard let name = askForText(prompt, initial: "") else { return }
-            let url = try ProjectIO.newNote(in: folder, name: name, text: templateText(key, title: name) ?? "")
+            let url = try ProjectIO.newNote(in: folder, name: name, text: text ?? templateText(key, title: name) ?? "")
             refreshTree()
             openFile(url)
         } catch {
@@ -687,4 +693,66 @@ final class ProjectModel {
         info.paperSize = paper.size
         doc.printOperation(for: info, scalingMode: .pageScaleNone, autoRotate: false)?.runModal(for: NSApp.keyWindow ?? NSWindow(), delegate: nil, didRun: nil, contextInfo: nil)
     }
+
+    // MARK: Scene commands
+
+    func splitScene(_ id: UUID, at offset: Int) {
+        guard let i = scenes.firstIndex(where: { $0.id == id }) else { return }
+        let (first, second) = ProjectIO.split(scenes[i].file.body, at: offset)
+        scenes[i].file.body = first
+        save(id, rename: true)
+        focusedScene = id
+        newScene(text: second)
+    }
+
+    /// Joins a scene with the next one; the next one's file goes to the Graveyard, so nothing is lost.
+    func mergeWithNext(_ id: UUID) {
+        guard let root = projectURL, let i = scenes.firstIndex(where: { $0.id == id }), i + 1 < scenes.count else { return }
+        let next = scenes[i + 1]
+        scenes[i].file.body = scenes[i].file.body.trimmingCharacters(in: .newlines) + "\n\n" + next.file.body
+        save(id, rename: false)
+        do { _ = try ProjectIO.bury(file: next.url, in: root) } catch { errorMessage = error.localizedDescription; return }
+        scenes.remove(at: i + 1)
+        for (n, s) in scenes.enumerated() where s.number != n + 1 { save(s.id, rename: Prefs.naming == .numbered) }
+        refreshTree()
+        showToast("Merged. \(next.url.lastPathComponent) is in the Graveyard")
+    }
+
+    func moveScene(_ id: UUID, by delta: Int) {
+        guard let i = scenes.firstIndex(where: { $0.id == id }) else { return }
+        let j = i + delta
+        guard scenes.indices.contains(j) else { return }
+        move(id, before: delta < 0 ? scenes[j].id : (j + 1 < scenes.count ? scenes[j + 1].id : nil))
+    }
+
+    // MARK: Snapshots
+
+    var showSnapshots = false
+    var snapshotSelection: URL?
+
+    func takeSnapshot(_ id: UUID, title: String = "") {
+        guard let root = projectURL, let s = scenes.first(where: { $0.id == id }) else { return }
+        do {
+            try ProjectIO.snapshot(s, in: root, title: title)
+            showToast("Snapshot taken of \(s.heading)")
+        } catch { errorMessage = "Couldn't take a snapshot: \(error.localizedDescription)" }
+    }
+
+    func snapshots(_ id: UUID) -> [URL] {
+        guard let root = projectURL, let s = scenes.first(where: { $0.id == id }) else { return [] }
+        return ProjectIO.snapshots(for: s.url, in: root)
+    }
+
+    /// Restores a snapshot, after snapshotting the current text so the restore can itself be undone.
+    func restoreSnapshot(_ url: URL, into id: UUID) {
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return }
+        takeSnapshot(id, title: "before restore")
+        update(id, body: text)
+        showToast("Restored snapshot from \(url.deletingPathExtension().lastPathComponent)")
+    }
+
+    // MARK: Session
+
+    var showReport = false
+    @ObservationIgnored var sessionStartWords: Int?
 }

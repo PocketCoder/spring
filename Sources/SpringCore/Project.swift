@@ -13,6 +13,8 @@ public struct SceneFile: Identifiable, Sendable {
     public var knownModDate: Date?
     /// `.fountain`/`.txt` have no frontmatter: their number lives in a hidden first-line note, `[[scene: 3]]`.
     public var noteNumber: Int?
+    /// What's on disk as of the last read or write; lets a rename made elsewhere be recognised by content.
+    public var savedText: String?
 
     public init(url: URL, file: MarkdownFile, knownModDate: Date? = nil) {
         self.url = url
@@ -50,7 +52,9 @@ public enum ProjectIO {
     }
 
     public static func read(_ url: URL) throws -> SceneFile {
-        var scene = SceneFile(url: url, file: MarkdownFile(text: try String(contentsOf: url, encoding: .utf8)), knownModDate: modDate(url))
+        let raw = try String(contentsOf: url, encoding: .utf8)
+        var scene = SceneFile(url: url, file: MarkdownFile(text: raw), knownModDate: modDate(url))
+        scene.savedText = raw
         if !scene.isMarkdown, let match = scene.file.body.firstMatch(of: #/^\[\[scene:\s*(\d+)\]\]\n?/#) {
             scene.noteNumber = Int(match.1)
             scene.file.body.removeSubrange(match.range)
@@ -164,6 +168,7 @@ public enum ProjectIO {
             scene.url = target
         }
         scene.knownModDate = modDate(scene.url)
+        scene.savedText = scene.diskText
         return .saved(renamedFrom: renamedFrom)
     }
 }
@@ -312,6 +317,7 @@ extension ProjectIO {
         if let disk = modDate(file.url), let known = file.knownModDate, disk > known { return .conflict }
         try file.diskText.write(to: file.url, atomically: true, encoding: .utf8)
         file.knownModDate = modDate(file.url)
+        file.savedText = file.diskText
         return .saved(renamedFrom: nil)
     }
 
@@ -355,9 +361,22 @@ extension ProjectIO {
         var conflicts = conflicts
         var changed = false
         var result: [SceneFile] = []
+        let held = Set(scenes.map { key($0.url) })
+        var unclaimed = onDisk.filter { !held.contains(key($0)) }
         for var s in scenes {
             guard FileManager.default.fileExists(atPath: s.url.path) else {
-                if dirty.contains(s.id) { conflicts.insert(s.id); result.append(s) } else { changed = true }
+                // Renamed elsewhere (Obsidian, Finder): a new file with exactly what Spring last saw is this scene.
+                if let saved = s.savedText,
+                   let i = unclaimed.firstIndex(where: { (try? String(contentsOf: $0, encoding: .utf8)) == saved }) {
+                    s.url = unclaimed.remove(at: i)
+                    s.knownModDate = modDate(s.url)
+                    result.append(s)
+                    changed = true
+                } else if dirty.contains(s.id) {
+                    conflicts.insert(s.id); result.append(s)
+                } else {
+                    changed = true
+                }
                 continue
             }
             if let disk = modDate(s.url), let known = s.knownModDate, disk > known {
@@ -394,5 +413,93 @@ extension SceneFile {
     public mutating func setColorLabel(_ name: String?) {
         guard isMarkdown else { return }
         if let name { file.set("color", name) } else { file.frontmatter?.removeAll { $0.hasPrefix("color:") } }
+    }
+}
+
+// MARK: Splitting scenes and snapshots
+extension ProjectIO {
+    /// Splits a scene body at a UTF-16 offset; the new scene starts at the next non-blank line.
+    public static func split(_ body: String, at offset: Int) -> (String, String) {
+        let ns = body as NSString
+        let o = min(max(0, offset), ns.length)
+        let first = ns.substring(to: o).replacingOccurrences(of: #"\s+$"#, with: "", options: .regularExpression) + "\n"
+        let second = ns.substring(from: o).replacingOccurrences(of: #"^\s+"#, with: "", options: .regularExpression)
+        return (first, second.isEmpty ? "INT. \n" : second)
+    }
+
+    /// Snapshots live in a hidden folder, so Obsidian and the binder don't list them: .spring/snapshots/<scene name>/.
+    public static func snapshotFolder(for scene: URL, in project: URL) -> URL {
+        project.appending(path: ".spring/snapshots/\(stem(of: scene))", directoryHint: .isDirectory)
+    }
+
+    @discardableResult
+    public static func snapshot(_ scene: SceneFile, in project: URL, title: String = "", date: Date = .now) throws -> URL {
+        let dir = snapshotFolder(for: scene.url, in: project)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_GB")
+        f.dateFormat = "yyyy-MM-dd HH.mm.ss"
+        let clean = title.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
+        let url = dir.appending(path: f.string(from: date) + (clean.isEmpty ? "" : " " + clean) + ".md")
+        try scene.file.body.write(to: url, atomically: true, encoding: .utf8)
+        return url
+    }
+
+    /// Newest first.
+    public static func snapshots(for scene: URL, in project: URL) -> [URL] {
+        ((try? FileManager.default.contentsOfDirectory(at: snapshotFolder(for: scene, in: project), includingPropertiesForKeys: nil)) ?? [])
+            .filter { $0.pathExtension == "md" }
+            .sorted { $0.lastPathComponent > $1.lastPathComponent }
+    }
+
+    /// Keeps snapshots with their scene when it's renamed.
+    public static func moveSnapshots(from old: URL, to new: URL, in project: URL) {
+        let a = snapshotFolder(for: old, in: project), b = snapshotFolder(for: new, in: project)
+        guard a != b, FileManager.default.fileExists(atPath: a.path), !FileManager.default.fileExists(atPath: b.path) else { return }
+        try? FileManager.default.moveItem(at: a, to: b)
+    }
+}
+
+// MARK: Script report
+public struct ScriptReport: Sendable {
+    public struct Speaker: Sendable { public let name: String; public let speeches: Int; public let words: Int; public let scenes: Int }
+    public struct Place: Sendable { public let name: String; public let scenes: Int }
+    public var scenes = 0, words = 0, interior = 0, exterior = 0, day = 0, night = 0
+    public var speakers: [Speaker] = []
+    public var places: [Place] = []
+
+    public init(bodies: [String]) {
+        var speeches: [String: (Int, Int, Set<Int>)] = [:]
+        var placeCount: [String: Int] = [:]
+        for (i, body) in bodies.enumerated() {
+            words += body.split(whereSeparator: { $0.isWhitespace }).count
+            for h in Fountain.headings(in: body) {
+                scenes += 1
+                let u = h.uppercased()
+                if u.hasPrefix("INT") || u.hasPrefix("I/E") { interior += 1 }
+                if u.hasPrefix("EXT") || u.hasPrefix("I/E") || u.hasPrefix("INT./EXT") || u.hasPrefix("INT/EXT") { exterior += 1 }
+                if u.hasSuffix("NIGHT") { night += 1 } else if u.hasSuffix("DAY") || u.hasSuffix("MORNING") || u.hasSuffix("AFTERNOON") { day += 1 }
+                if let loc = Autocomplete.location(ofHeading: h) { placeCount[loc, default: 0] += 1 }
+            }
+            let lines = Fountain.lines(body), kinds = Fountain.classify(body)
+            var current: String?
+            for (line, kind) in zip(lines, kinds) {
+                switch kind {
+                case .character:
+                    let name = Autocomplete.cueName(line)
+                    current = name
+                    var e = speeches[name] ?? (0, 0, [])
+                    e.0 += 1; e.2.insert(i)
+                    speeches[name] = e
+                case .dialogue:
+                    if let c = current { speeches[c]?.1 += line.split(whereSeparator: { $0.isWhitespace }).count }
+                case .parenthetical: break
+                default: current = nil
+                }
+            }
+        }
+        speakers = speeches.map { Speaker(name: $0.key, speeches: $0.value.0, words: $0.value.1, scenes: $0.value.2.count) }
+            .sorted { ($0.speeches, $1.name) > ($1.speeches, $0.name) }
+        places = placeCount.map { Place(name: $0.key, scenes: $0.value) }.sorted { ($0.scenes, $1.name) > ($1.scenes, $0.name) }
     }
 }
