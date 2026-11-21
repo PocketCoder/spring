@@ -71,4 +71,32 @@ public enum Fountain {
         let lines = lines(text)
         return zip(lines, classify(text)).compactMap { $1 == .heading ? headingText($0) : nil }
     }
+
+    /// Dual dialogue: line ranges of the speech before a `^` cue (left, blank lines between included) and the `^`
+    /// speech itself (right).
+    public static func dualPairs(_ text: String, kinds: [LineKind]? = nil) -> [(left: Range<Int>, right: Range<Int>)] {
+        let lines = lines(text)
+        let kinds = kinds ?? classify(text)
+        var pairs: [(left: Range<Int>, right: Range<Int>)] = []
+        var lastSpeech: Range<Int>?
+        var i = 0
+        while i < lines.count {
+            guard kinds[i] == .character else {
+                if kinds[i] != .blank { lastSpeech = nil }
+                i += 1
+                continue
+            }
+            var end = i + 1
+            while end < lines.count, kinds[end] == .dialogue || kinds[end] == .parenthetical { end += 1 }
+            let isDual = lines[i].trimmingCharacters(in: .whitespaces).hasSuffix("^")
+            if isDual, let prev = lastSpeech {
+                pairs.append((prev.lowerBound..<i, i..<end))
+                lastSpeech = nil
+            } else {
+                lastSpeech = i..<end
+            }
+            i = end
+        }
+        return pairs
+    }
 }

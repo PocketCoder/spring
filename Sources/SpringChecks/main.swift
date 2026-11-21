@@ -300,5 +300,9 @@ check(duet.last?.text == "They drink.", "action after the duet")
 let solo = SP.paginate(["INT. A - DAY\n\nSTEEL ^\nAlone."])[0].compactMap { $0 }
 check(solo[1].text == "STEEL" && solo[1].rightText.isEmpty, "^ with no speech before it prints normally")
 
+let duetText = "INT. A\n\nBRICK\nScrew it.\n\nSTEEL ^\n(laughing)\nScrew it.\n\nThey drink.\n\nSTEEL ^\nAlone."
+let pairs = Fountain.dualPairs(duetText)
+check(pairs.count == 1 && pairs[0].left == 2..<5 && pairs[0].right == 5..<8, "dual pair line ranges: \(pairs)")
+
 try? FileManager.default.removeItem(at: dir)
 print("SpringChecks: all passed")

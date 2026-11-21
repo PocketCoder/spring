@@ -24,7 +24,21 @@ enum ScriptStyler {
         var loc = 0
         storage.beginEditing()
         // ponytail: restyles the whole scene per keystroke; fine for scene-sized files, go incremental if a scene ever gets long.
-        for (line, kind) in zip(Fountain.lines(text), Fountain.classify(text)) {
+        let kinds = Fountain.classify(text)
+        // Dual dialogue: the two speeches become the two cells of a one-row text table, side by side.
+        var cells: [Int: NSTextTableBlock] = [:]
+        for pair in Fountain.dualPairs(text, kinds: kinds) {
+            let table = NSTextTable()
+            table.numberOfColumns = 2
+            table.layoutAlgorithm = .fixedLayoutAlgorithm
+            for (column, lines) in [pair.left, pair.right].enumerated() {
+                let cell = NSTextTableBlock(table: table, startingRow: 0, rowSpan: 1, startingColumn: column, columnSpan: 1)
+                cell.setContentWidth(50, type: .percentageValueType)
+                cell.setWidth(column == 0 ? 2 * cw : 0, type: .absoluteValueType, for: .padding, edge: .maxX)
+                for l in lines { cells[l] = cell }
+            }
+        }
+        for (n, (line, kind)) in zip(Fountain.lines(text), kinds).enumerated() {
             let len = line.utf16.count
             let range = NSRange(location: loc, length: min(len + 1, total - loc))
             let p = NSMutableParagraphStyle()
@@ -45,6 +59,17 @@ enum ScriptStyler {
             case .centered: p.alignment = .center
             case .section, .synopsis, .note, .pageBreak: colour = .secondaryLabelColor
             default: break
+            }
+            if let cell = cells[n] {
+                p.textBlocks = [cell]
+                p.firstLineHeadIndent = kind == .parenthetical ? 3 * cw : 0
+                p.headIndent = p.firstLineHeadIndent
+                p.tailIndent = 0
+                p.alignment = kind == .character ? .center : .natural
+                if kind == .blank { // the blank line between the speeches sits in the left cell: keep it from adding height
+                    p.maximumLineHeight = 1
+                    font = Theme.scriptFont(fontName, 1)
+                }
             }
             if range.length > 0 {
                 storage.setAttributes([.font: font, .paragraphStyle: p, .foregroundColor: colour], range: range)
