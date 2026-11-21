@@ -11,6 +11,11 @@ enum Prefs {
     static let fadeSceneList = "fadeSceneList"
     static let vaultBookmark = "vaultBookmark"
     static let vaultPath = "vaultPath"            // shown in Settings only
+    static let vaultPromptDone = "vaultPromptDone"
+    static let templatesBookmark = "templatesBookmark" // a folder chosen by hand, overriding the vault's
+    static let templatesPath = "templatesPath"
+    static let templateScene = "templateScene", templateCharacter = "templateCharacter"
+    static let templateLocation = "templateLocation", templateNote = "templateNote"
 
     static var saveExt: String { UserDefaults.standard.string(forKey: saveFormat) ?? ".fountain.md" }
     static var fountainMarker: FountainMarker { FountainMarker(rawValue: UserDefaults.standard.string(forKey: marker) ?? "") ?? .tag }
@@ -26,6 +31,7 @@ struct SettingsView: View {
         TabView {
             FilesSettings().tabItem { Label("Files", systemImage: "folder") }
             AppearanceSettings().tabItem { Label("Appearance", systemImage: "circle.lefthalf.filled") }
+            TemplateSettings().tabItem { Label("Templates", systemImage: "doc.on.doc") }
         }
         .frame(width: 520)
         .padding(20)
@@ -81,6 +87,49 @@ struct AppearanceSettings: View {
             Slider(value: $fontSize, in: 12...20, step: 1) { Text("Size:") } minimumValueLabel: { Text("12") } maximumValueLabel: { Text("20") }
             Text("\(Int(fontSize)) pt").font(.caption).foregroundStyle(.secondary)
             Toggle("Fade the scene list until hovered", isOn: $fade)
+        }
+    }
+}
+
+struct TemplateSettings: View {
+    @AppStorage(Prefs.vaultPath) private var vaultPath = ""
+    @AppStorage(Prefs.templatesPath) private var chosenPath = ""
+    @AppStorage(Prefs.templateScene) private var scene = ""
+    @AppStorage(Prefs.templateCharacter) private var character = ""
+    @AppStorage(Prefs.templateLocation) private var location = ""
+    @AppStorage(Prefs.templateNote) private var note = ""
+
+    var body: some View {
+        let folder = ProjectModel.templatesFolder
+        let names = folder.map(Templates.list(in:)) ?? []
+        Form {
+            LabeledContent("Templates folder:") {
+                HStack {
+                    Text(folder.map { ($0.path as NSString).abbreviatingWithTildeInPath } ?? "None")
+                        .foregroundStyle(folder == nil ? .secondary : .primary)
+                        .lineLimit(1).truncationMode(.middle)
+                    Button("Choose…") { ProjectModel.chooseTemplatesFolder() }
+                    if !chosenPath.isEmpty { Button("Use Vault's") { ProjectModel.clearTemplatesFolder() } }
+                }
+            }
+            Text(chosenPath.isEmpty
+                 ? (vaultPath.isEmpty ? "Choose a vault in Files, or pick any folder of templates." : "From your vault's Templates (or Templater) settings.")
+                 : "Chosen by hand.")
+                .font(.caption).foregroundStyle(.secondary)
+            picker("New scene:", $scene, names)
+            picker("New character:", $character, names)
+            picker("New location:", $location, names)
+            picker("New note:", $note, names)
+            Text("{{title}}, {{date}} and {{time}} are filled in, with Obsidian date formats such as {{date:D MMMM YYYY}}. Templater code is left as text.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private func picker(_ label: String, _ value: Binding<String>, _ names: [String]) -> some View {
+        Picker(label, selection: value) {
+            Text("None").tag("")
+            ForEach(names, id: \.self) { Text(($0 as NSString).deletingPathExtension).tag($0) }
+            if !value.wrappedValue.isEmpty, !names.contains(value.wrappedValue) { Text(value.wrappedValue + " (missing)").tag(value.wrappedValue) }
         }
     }
 }

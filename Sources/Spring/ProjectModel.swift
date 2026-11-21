@@ -197,7 +197,7 @@ final class ProjectModel {
     func newScene() {
         guard let root = projectURL else { return }
         do {
-            let scene = try ProjectIO.newScene(in: root, ext: Prefs.saveExt)
+            let scene = try ProjectIO.newScene(in: root, ext: Prefs.saveExt, template: templateText(Prefs.templateScene, title: "Untitled scene"))
             scenes.append(scene)
             save(scene.id, rename: false)
             openInScript(scene.id)
@@ -288,7 +288,12 @@ final class ProjectModel {
 
     func newNote(in folder: URL) {
         do {
-            let url = try ProjectIO.newNote(in: folder)
+            let key = switch folder.lastPathComponent {
+            case "Characters": Prefs.templateCharacter
+            case "Locations": Prefs.templateLocation
+            default: Prefs.templateNote
+            }
+            let url = try ProjectIO.newNote(in: folder, text: templateText(key, title: "Untitled") ?? "")
             refreshTree()
             openFile(url)
         } catch {
@@ -451,5 +456,44 @@ final class ProjectModel {
         guard let url = boardURL, boardSave == nil else { return }
         let disk = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
         if disk != boardModDate { loadBoard() }
+    }
+
+    // MARK: Templates
+
+    /// A folder chosen by hand, else the one the vault's Templates / Templater settings name.
+    static var templatesFolder: URL? {
+        if let data = UserDefaults.standard.data(forKey: Prefs.templatesBookmark) {
+            var stale = false
+            if let url = try? URL(resolvingBookmarkData: data, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &stale) {
+                _ = url.startAccessingSecurityScopedResource()
+                return url
+            }
+        }
+        return vault.flatMap(Templates.folder(inVault:))
+    }
+
+    static func chooseTemplatesFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.prompt = "Use Folder"
+        panel.message = "Choose a folder of Markdown templates."
+        guard panel.runModal() == .OK, let url = panel.url,
+              let data = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil) else { return }
+        UserDefaults.standard.set(data, forKey: Prefs.templatesBookmark)
+        UserDefaults.standard.set(url.path, forKey: Prefs.templatesPath)
+    }
+
+    static func clearTemplatesFolder() {
+        UserDefaults.standard.removeObject(forKey: Prefs.templatesBookmark)
+        UserDefaults.standard.removeObject(forKey: Prefs.templatesPath)
+    }
+
+    /// The chosen template for `key`, filled in, or nil when none is set or it can't be read.
+    func templateText(_ key: String, title: String) -> String? {
+        guard let name = UserDefaults.standard.string(forKey: key), !name.isEmpty,
+              let folder = Self.templatesFolder,
+              let text = try? String(contentsOf: folder.appending(path: name), encoding: .utf8) else { return nil }
+        return Templates.render(text, title: title)
     }
 }

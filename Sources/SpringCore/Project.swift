@@ -195,12 +195,14 @@ extension ProjectIO {
     }
 
     /// A new, empty scene file in `Scenes/`, named "Untitled scene" until it gets a heading.
-    public static func newScene(in project: URL, ext: String) throws -> SceneFile {
+    public static func newScene(in project: URL, ext: String, template: String? = nil) throws -> SceneFile {
         let dir = project.appending(path: "Scenes")
         var url = dir.appending(path: "Untitled scene\(ext)")
         var n = 2
         while FileManager.default.fileExists(atPath: url.path) { url = dir.appending(path: "Untitled scene \(n)\(ext)"); n += 1 }
-        var scene = SceneFile(url: url, file: MarkdownFile(text: "INT. \n"))
+        var file = MarkdownFile(text: template ?? "INT. \n")
+        if file.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { file.body = "INT. \n" }
+        var scene = SceneFile(url: url, file: file)
         try scene.diskText.write(to: scene.url, atomically: true, encoding: .utf8)
         scene.knownModDate = modDate(scene.url)
         return scene
@@ -285,11 +287,11 @@ extension ProjectIO {
     }
 
     /// `Untitled.md` (numbered if taken) in `folder`.
-    public static func newNote(in folder: URL) throws -> URL {
+    public static func newNote(in folder: URL, text: String = "") throws -> URL {
         var url = folder.appending(path: "Untitled.md")
         var n = 2
         while FileManager.default.fileExists(atPath: url.path) { url = folder.appending(path: "Untitled \(n).md"); n += 1 }
-        try "".write(to: url, atomically: true, encoding: .utf8)
+        try text.write(to: url, atomically: true, encoding: .utf8)
         return url
     }
 }

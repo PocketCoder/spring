@@ -151,12 +151,34 @@ struct ConflictBanner: View {
 
 struct WelcomeView: View {
     @Environment(ProjectModel.self) private var model
+    @AppStorage(Prefs.vaultPath) private var vaultPath = ""
+    @AppStorage(Prefs.vaultPromptDone) private var promptDone = false
+
     var body: some View {
         VStack(spacing: 16) {
             Text("Spring").font(.custom("Courier Prime", size: 34).bold())
-            Button("Open Project Folder…") { model.chooseProject() }
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut("o")
+            HStack {
+                Button("New Project…") { model.newProject() }
+                Button("Open Project Folder…") { model.chooseProject() }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut("o")
+            }
+            if vaultPath.isEmpty && !promptDone {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Use with Obsidian?").font(.headline)
+                    Text("Pick your vault to use its templates and keep links tidy across it. You can skip this and set it later in Settings.")
+                        .font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack {
+                        Button("Choose Vault…") { ProjectModel.chooseVault() }
+                        Button("Skip") { promptDone = true }
+                    }
+                }
+                .padding(14)
+                .frame(width: 380, alignment: .leading)
+                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+                .padding(.top, 24)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

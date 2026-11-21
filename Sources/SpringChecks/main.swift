@@ -274,5 +274,23 @@ let tp = SP.titlePage("Title: My Project\nCredit: Written by\nAuthor: Jo Bloggs\
 check(tp.centre.map(\.text) == ["MY PROJECT", "", "Written by", "", "Jo Bloggs"], "title page centre: \(tp.centre.map(\.text))")
 check(tp.bottomLeft.map(\.text) == ["21 November 2026", "", "jo@example.com", "01234 567890"], "title page contact: \(tp.bottomLeft.map(\.text))")
 
+// Obsidian templates
+let vault = dir.appending(path: "vault")
+try FileManager.default.createDirectory(at: vault.appending(path: ".obsidian/plugins/templater-obsidian"), withIntermediateDirectories: true)
+check(Templates.folder(inVault: vault) == nil, "no templates configured")
+try #"{"templates_folder": "Meta/Templater"}"#.write(to: vault.appending(path: ".obsidian/plugins/templater-obsidian/data.json"), atomically: true, encoding: .utf8)
+check(Templates.folder(inVault: vault)?.path.hasSuffix("Meta/Templater") == true, "Templater folder")
+try #"{"folder": "/Templates/"}"#.write(to: vault.appending(path: ".obsidian/templates.json"), atomically: true, encoding: .utf8)
+check(Templates.folder(inVault: vault)?.lastPathComponent == "Templates", "core Templates folder wins, slashes trimmed")
+try FileManager.default.createDirectory(at: vault.appending(path: "Templates"), withIntermediateDirectories: true)
+for n in ["Scene.md", "Character.md", "image.png"] { try "".write(to: vault.appending(path: "Templates/\(n)"), atomically: true, encoding: .utf8) }
+check(Templates.list(in: vault.appending(path: "Templates")) == ["Character.md", "Scene.md"], "template list")
+var cal = Calendar(identifier: .gregorian); cal.timeZone = .current
+let when = cal.date(from: DateComponents(year: 2026, month: 11, day: 3, hour: 14, minute: 5))!
+check(Templates.render("# {{title}}\nCreated {{date}} {{time}}\n<% tp.file.title %>", title: "BILLY", date: when)
+      == "# BILLY\nCreated 2026-11-03 14:05\n<% tp.file.title %>", "core placeholders, Templater untouched")
+check(Templates.render("{{date:dddd D MMMM YYYY}} [{{ time:h:mm A }}]", title: "", date: when) == "Tuesday 3 November 2026 [2:05 PM]", "moment formats: \(Templates.render("{{date:dddd D MMMM YYYY}} [{{ time:h:mm A }}]", title: "", date: when))")
+check(Templates.formatted(when, moment: "[Week of] YYYY-MM-DD") == "Week of 2026-11-03", "bracketed literal")
+
 try? FileManager.default.removeItem(at: dir)
 print("SpringChecks: all passed")
