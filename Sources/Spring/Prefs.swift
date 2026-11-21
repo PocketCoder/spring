@@ -12,11 +12,24 @@ enum Prefs {
     static let vaultBookmark = "vaultBookmark"
     static let vaultPath = "vaultPath"            // shown in Settings only
     static let vaultPromptDone = "vaultPromptDone"
+    static let typewriter = "typewriterScrolling", dim = "dimOtherParagraphs"
+    static let theme = "theme"                    // "system" | "light" | "dark"
+    static let accent = "accentColour"
+    static let sceneNaming = "sceneNaming"        // "heading" | "numbered" | "keep"
+
+    static func applyTheme() {
+        switch UserDefaults.standard.string(forKey: theme) {
+        case "light": NSApp.appearance = NSAppearance(named: .aqua)
+        case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
+        default: NSApp.appearance = nil
+        }
+    }
     static let templatesBookmark = "templatesBookmark" // a folder chosen by hand, overriding the vault's
     static let templatesPath = "templatesPath"
     static let templateScene = "templateScene", templateCharacter = "templateCharacter"
     static let templateLocation = "templateLocation", templateNote = "templateNote"
 
+    static var naming: SceneNaming { SceneNaming(rawValue: UserDefaults.standard.string(forKey: sceneNaming) ?? "") ?? .heading }
     static var saveExt: String { UserDefaults.standard.string(forKey: saveFormat) ?? ".fountain.md" }
     static var fountainMarker: FountainMarker { FountainMarker(rawValue: UserDefaults.standard.string(forKey: marker) ?? "") ?? .tag }
     static var projectFolders: [String] {
@@ -30,6 +43,7 @@ struct SettingsView: View {
     var body: some View {
         TabView {
             FilesSettings().tabItem { Label("Files", systemImage: "folder") }
+            EditorSettings().tabItem { Label("Editor", systemImage: "character.cursor.ibeam") }
             AppearanceSettings().tabItem { Label("Appearance", systemImage: "circle.lefthalf.filled") }
             TemplateSettings().tabItem { Label("Templates", systemImage: "doc.on.doc") }
         }
@@ -74,13 +88,56 @@ struct FilesSettings: View {
     }
 }
 
+struct EditorSettings: View {
+    @AppStorage(Prefs.typewriter) private var typewriter = false
+    @AppStorage(Prefs.dim) private var dim = false
+    @AppStorage(Prefs.sceneNaming) private var naming = "heading"
+
+    var body: some View {
+        Form {
+            Toggle("Typewriter scrolling", isOn: $typewriter)
+            Text("Keeps the line you're writing in the middle of the window.").font(.caption).foregroundStyle(.secondary)
+            Toggle("Dim all but the current paragraph", isOn: $dim)
+            Picker("Scene file names:", selection: $naming) {
+                Text("First scene heading").tag("heading")
+                Text("Number and heading (003 INT. BAR - NIGHT)").tag("numbered")
+                Text("Keep the name I gave it").tag("keep")
+            }
+            Text("Numbered names change when you reorder scenes; links to them are updated.").font(.caption).foregroundStyle(.secondary)
+        }
+    }
+}
+
 struct AppearanceSettings: View {
+    @AppStorage(Prefs.theme) private var theme = "system"
+    @AppStorage(Prefs.accent) private var accent = "Ink blue"
     @AppStorage(Prefs.fontName) private var fontName = "Courier Prime"
     @AppStorage(Prefs.fontSize) private var fontSize = 15.0
     @AppStorage(Prefs.fadeSceneList) private var fade = true
 
     var body: some View {
         Form {
+            Picker("Theme:", selection: $theme) {
+                Text("System").tag("system")
+                Text("Light").tag("light")
+                Text("Dark").tag("dark")
+            }
+            .pickerStyle(.segmented)
+            .onChange(of: theme) { Prefs.applyTheme() }
+            LabeledContent("Accent:") {
+                HStack(spacing: 10) {
+                    ForEach(Theme.accents, id: \.name) { a in
+                        Button { accent = a.name } label: {
+                            Circle().fill(Color(nsColor: a.color)).frame(width: 18, height: 18)
+                                .overlay(Circle().strokeBorder(.white, lineWidth: 2).opacity(accent == a.name ? 1 : 0))
+                                .overlay(Circle().strokeBorder(Color(nsColor: a.color), lineWidth: 1).padding(-3).opacity(accent == a.name ? 1 : 0))
+                        }
+                        .buttonStyle(.plain)
+                        .help(a.name)
+                        .accessibilityLabel(a.name)
+                    }
+                }
+            }
             Picker("Script font:", selection: $fontName) {
                 ForEach(Prefs.fonts, id: \.self) { Text($0).font(.custom($0, size: 13)) }
             }

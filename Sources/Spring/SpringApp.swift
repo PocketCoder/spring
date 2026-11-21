@@ -42,6 +42,7 @@ struct SpringApp: App {
                 .environment(model)
                 .frame(minWidth: 820, minHeight: 520)
                 .onAppear {
+                    Prefs.applyTheme()
                     model.restoreLastProject()
                     NSApp.activate()
                 }
@@ -65,6 +66,10 @@ struct SpringApp: App {
             CommandGroup(before: .sidebar) {
                 Button("Script") { model.viewMode = .script }.keyboardShortcut("1")
                 Button("Corkboard") { model.viewMode = .cards }.keyboardShortcut("2")
+                Button(model.continuous ? "Show One Scene at a Time" : "Show Continuous Script") { model.continuous.toggle() }
+                    .keyboardShortcut("3")
+                Button("Previous Scene") { step(-1) }.keyboardShortcut("[")
+                Button("Next Scene") { step(1) }.keyboardShortcut("]")
                 Button("Binder") { model.binder = model.binder == .detailOnly ? .all : .detailOnly }
                     .keyboardShortcut("b", modifiers: [.command, .control])
                 Divider()
@@ -81,5 +86,11 @@ struct SpringApp: App {
             }
         }
         Settings { SettingsView() }
+    }
+
+    private func step(_ by: Int) {
+        guard let id = model.currentScene, let i = model.scenes.firstIndex(where: { $0.id == id }) else { return }
+        let j = i + by
+        if model.scenes.indices.contains(j) { model.focus(model.scenes[j].id, atEnd: false); model.scrollTarget = model.scenes[j].id }
     }
 }

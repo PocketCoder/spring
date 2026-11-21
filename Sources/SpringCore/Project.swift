@@ -2,6 +2,9 @@ import Foundation
 
 public enum FountainMarker: String, Sendable { case tag, cssclass }
 
+/// How scene files are named: after the first heading, number + heading ("003 INT. BAR - NIGHT"), or left alone.
+public enum SceneNaming: String, Sendable { case heading, numbered, keep }
+
 public struct SceneFile: Identifiable, Sendable {
     public let id = UUID()
     public var url: URL
@@ -94,15 +97,17 @@ public enum ProjectIO {
     }
 
     /// File name for a heading: path separators removed, numbered if another file already has it.
-    public static func targetURL(for scene: SceneFile) -> URL {
+    public static func targetURL(for scene: SceneFile, number: Int? = nil, naming: SceneNaming = .heading) -> URL {
+        if naming == .keep { return scene.url }
         let ext = ext(of: scene.url) ?? ".fountain.md"
         let clean = scene.heading.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
             .trimmingCharacters(in: .whitespacesAndNewlines.union(.init(charactersIn: ".")))
         guard !clean.isEmpty else { return scene.url }
+        let base = naming == .numbered ? String(format: "%03d ", number ?? scene.number ?? 0) + clean : clean
         let dir = scene.url.deletingLastPathComponent()
         var n = 1
         while true {
-            let url = dir.appending(path: clean + (n == 1 ? "" : " \(n)") + ext)
+            let url = dir.appending(path: base + (n == 1 ? "" : " \(n)") + ext)
             let same = url.path.lowercased() == scene.url.path.lowercased()
             if same || !FileManager.default.fileExists(atPath: url.path) { return url }
             n += 1
@@ -114,7 +119,8 @@ public enum ProjectIO {
     /// Writes the scene and sets its number and Fountain marker. With `rename`, also renames it after its
     /// first heading (callers then fix links with `updateLinks`).
     /// Returns `.conflict` without writing if the file changed on disk since Spring last saw it.
-    public static func save(_ scene: inout SceneFile, number: Int, marker: FountainMarker, rename: Bool = true) throws -> SaveResult {
+    public static func save(_ scene: inout SceneFile, number: Int, marker: FountainMarker, rename: Bool = true,
+                                   naming: SceneNaming = .heading) throws -> SaveResult {
         if let disk = modDate(scene.url), let known = scene.knownModDate, disk > known { return .conflict }
         let name = scene.url.lastPathComponent.lowercased()
         if !scene.isMarkdown { scene.noteNumber = number }
@@ -126,7 +132,7 @@ public enum ProjectIO {
         }
         try scene.diskText.write(to: scene.url, atomically: true, encoding: .utf8)
         var renamedFrom: URL?
-        let target = targetURL(for: scene)
+        let target = targetURL(for: scene, number: number, naming: naming)
         if rename, target.lastPathComponent != scene.url.lastPathComponent {
             try FileManager.default.moveItem(at: scene.url, to: target)
             renamedFrom = scene.url
@@ -216,9 +222,14 @@ extension ProjectIO {
 
     /// Appends cut text to `Graveyard/<heading>.md` with the date and a link back to the scene. Returns that file.
     @discardableResult
-    public static func bury(_ text: String, from scene: SceneFile, in project: URL, date: Date = .now) throws -> URL {
+    public static func graveyardFile(for scene: SceneFile, in project: URL) -> URL {
         let name = scene.heading.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
-        let url = try graveyard(project).appending(path: name + ".md")
+        return project.appending(path: "Graveyard/\(name).md")
+    }
+
+    public static func bury(_ text: String, from scene: SceneFile, in project: URL, date: Date = .now) throws -> URL {
+        _ = try graveyard(project)
+        let url = graveyardFile(for: scene, in: project)
         let stamp = date.formatted(.iso8601.year().month().day().dateSeparator(.dash)) + " " + date.formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits))
         let entry = "## \(stamp) from [[\(linkName(of: scene.url))]]\n\n\(text.trimmingCharacters(in: .newlines))\n\n"
         let existing = (try? String(contentsOf: url, encoding: .utf8)) ?? ""

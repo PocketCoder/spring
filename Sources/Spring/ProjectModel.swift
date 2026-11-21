@@ -100,7 +100,7 @@ final class ProjectModel {
         let scene = scenes.remove(at: from)
         let to = target.flatMap { t in scenes.firstIndex { $0.id == t } } ?? scenes.endIndex
         scenes.insert(scene, at: to)
-        for (i, s) in scenes.enumerated() where s.number != i + 1 { save(s.id, rename: false) }
+        for (i, s) in scenes.enumerated() where s.number != i + 1 { save(s.id, rename: Prefs.naming == .numbered) }
     }
 
     func openInScript(_ id: UUID) {
@@ -124,7 +124,7 @@ final class ProjectModel {
         guard let i = scenes.firstIndex(where: { $0.id == id }), !conflicts.contains(id) else { return }
         var scene = scenes[i]
         do {
-            switch try ProjectIO.save(&scene, number: i + 1, marker: marker, rename: rename) {
+            switch try ProjectIO.save(&scene, number: i + 1, marker: marker, rename: rename, naming: Prefs.naming) {
             case .saved(let oldURL):
                 scenes[i] = scene
                 if let oldURL, let root = projectURL {
@@ -148,7 +148,8 @@ final class ProjectModel {
 
     private func needsRename(_ id: UUID) -> Bool {
         guard let s = scenes.first(where: { $0.id == id }) else { return false }
-        return ProjectIO.targetURL(for: s).lastPathComponent != s.url.lastPathComponent
+        let n = (scenes.firstIndex { $0.id == id } ?? 0) + 1
+        return ProjectIO.targetURL(for: s, number: n, naming: Prefs.naming).lastPathComponent != s.url.lastPathComponent
     }
 
     /// Conflict: overwrite the file on disk with Spring's version.
@@ -209,10 +210,21 @@ final class ProjectModel {
     }
 
     /// Selected text, already cut from the scene, goes to Graveyard/<heading>.md.
-    func bury(_ text: String, from id: UUID) {
-        guard let root = projectURL, let scene = scenes.first(where: { $0.id == id }) else { return }
-        do { try ProjectIO.bury(text, from: scene, in: root); refreshTree() } catch {
+    /// Returns the undo: the Graveyard file as it was before.
+    func bury(_ text: String, from id: UUID) -> () -> Void {
+        guard let root = projectURL, let scene = scenes.first(where: { $0.id == id }) else { return {} }
+        let file = ProjectIO.graveyardFile(for: scene, in: root)
+        let before = try? String(contentsOf: file, encoding: .utf8)
+        do {
+            try ProjectIO.bury(text, from: scene, in: root)
+            refreshTree()
+            showToast("Moved to Graveyard/\(file.lastPathComponent)") { NSApp.sendAction(Selector(("undo:")), to: nil, from: nil) }
+        } catch {
             errorMessage = "Couldn't write to the Graveyard: \(error.localizedDescription)"
+        }
+        return { [weak self] in
+            if let before { try? before.write(to: file, atomically: true, encoding: .utf8) } else { try? FileManager.default.removeItem(at: file) }
+            self?.refreshTree()
         }
     }
 
@@ -221,11 +233,16 @@ final class ProjectModel {
         guard let root = projectURL, let i = scenes.firstIndex(where: { $0.id == id }) else { return }
         save(id, rename: false)
         do {
-            _ = try ProjectIO.bury(file: scenes[i].url, in: root)
+            let original = scenes[i].url
+            let buried = try ProjectIO.bury(file: original, in: root)
+            showToast("Moved \(original.lastPathComponent) to the Graveyard") { [weak self] in
+                try? FileManager.default.moveItem(at: buried, to: original)
+                self?.syncWithDisk()
+            }
             scenes.remove(at: i)
             pending[id] = nil
             if selected == id { selected = nil }
-            for (n, s) in scenes.enumerated() where s.number != n + 1 { save(s.id, rename: false) }
+            for (n, s) in scenes.enumerated() where s.number != n + 1 { save(s.id, rename: Prefs.naming == .numbered) }
             refreshTree()
         } catch {
             errorMessage = "Couldn't move the scene to the Graveyard: \(error.localizedDescription)"
@@ -527,5 +544,46 @@ final class ProjectModel {
 
     var wordCount: Int {
         scenes.reduce(0) { $0 + $1.file.body.split(whereSeparator: { $0.isWhitespace }).count }
+    }
+
+    // MARK: Focus across scenes, single-scene view, toast
+
+    struct FocusRequest: Equatable { let id: UUID; let atEnd: Bool; let token: Int }
+    var focusRequest: FocusRequest?
+    @ObservationIgnored private var focusToken = 0
+
+    /// Script view shows every scene (true) or one at a time.
+    var continuous = UserDefaults.standard.object(forKey: "continuousScript") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(continuous, forKey: "continuousScript") }
+    }
+
+    /// The scene shown in single-scene view.
+    var currentScene: UUID? { focusedScene.flatMap { id in scenes.contains { $0.id == id } ? id : nil } ?? scenes.first?.id }
+
+    func focus(_ id: UUID, atEnd: Bool) {
+        focusToken += 1
+        focusedScene = id
+        focusRequest = FocusRequest(id: id, atEnd: atEnd, token: focusToken)
+    }
+
+    /// Arrow keys off the top or bottom of a scene move into the neighbouring one.
+    func leave(_ id: UUID, up: Bool) -> Bool {
+        guard let i = scenes.firstIndex(where: { $0.id == id }) else { return false }
+        let j = up ? i - 1 : i + 1
+        guard scenes.indices.contains(j) else { return false }
+        focus(scenes[j].id, atEnd: up)
+        return true
+    }
+
+    struct Toast { let message: String; let undo: (() -> Void)?; let id = UUID() }
+    var toast: Toast?
+
+    func showToast(_ message: String, undo: (() -> Void)? = nil) {
+        let t = Toast(message: message, undo: undo)
+        toast = t
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(5))
+            if self?.toast?.id == t.id { self?.toast = nil }
+        }
     }
 }

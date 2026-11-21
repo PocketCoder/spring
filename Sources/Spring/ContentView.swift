@@ -5,6 +5,9 @@ struct ContentView: View {
     @Environment(ProjectModel.self) private var model
     @AppStorage(Prefs.fontSize) private var fontSize = 15.0
     @AppStorage(Prefs.fontName) private var fontName = "Courier Prime"
+    @AppStorage(Prefs.typewriter) private var typewriter = false
+    @AppStorage(Prefs.dim) private var dim = false
+    @AppStorage(Prefs.accent) private var accent = "Ink blue" // re-renders when the accent changes
 
     var body: some View {
         Group {
@@ -52,6 +55,10 @@ struct ContentView: View {
             .pickerStyle(.segmented)
             .labelStyle(.iconOnly)
             .help("Script or corkboard (⌘1 / ⌘2)")
+            Button { model.continuous.toggle() } label: {
+                Label(model.continuous ? "Single Scene" : "Continuous Script", systemImage: model.continuous ? "rectangle.stack" : "rectangle")
+            }
+            .help(model.continuous ? "Showing the whole script. Click for one scene at a time (⌘3)" : "Showing one scene. Click for the whole script (⌘3)")
             Menu {
                 Button("PDF…") { model.exportPDF() }
                 Button("Final Draft…") { model.export(as: "fdx") }
@@ -67,7 +74,7 @@ struct ContentView: View {
 
     private var caption: String {
         switch model.viewMode {
-        case .script: return "Script"
+        case .script: return model.continuous ? "Script" : "Single scene"
         case .cards: return model.showBeats ? "Beats" : "Corkboard"
         case .note: return model.note?.url.deletingPathExtension().lastPathComponent ?? "Note"
         }
@@ -79,28 +86,38 @@ struct ContentView: View {
                 if model.binder == .detailOnly { SceneList(proxy: proxy) }
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
-                        ForEach(Array(model.scenes.enumerated()), id: \.element.id) { i, scene in
-                            if i > 0 { SceneBreak(number: i + 1) }
+                        ForEach(Array(model.scenes.enumerated()).filter { model.continuous || $0.element.id == model.currentScene }, id: \.element.id) { i, scene in
+                            if i > 0 && model.continuous { SceneBreak(number: i + 1) }
+                            if !model.continuous { SingleSceneHeader(index: i) }
                             if model.conflicts.contains(scene.id) { ConflictBanner(scene: scene) }
                             ScriptTextView(
                                 text: Binding(get: { model.body(of: scene.id) }, set: { model.update(scene.id, body: $0) }),
                                 fontName: fontName,
                                 fontSize: fontSize,
+                                sceneID: scene.id,
                                 onEndEditing: { model.finishEditing(scene.id) },
                                 onBeginEditing: { model.focusedScene = scene.id },
                                 onBury: { model.bury($0, from: scene.id) },
+                                onLeave: { model.leave(scene.id, up: $0) },
+                                focusRequest: model.focusRequest,
+                                typewriter: typewriter,
+                                dim: dim,
                                 suggest: { model.suggestions(for: $0, afterBlank: $1) }
                             )
+                            .opacity(dim && model.focusedScene != nil && model.focusedScene != scene.id ? 0.35 : 1)
+                            .animation(.easeOut(duration: 0.2), value: model.focusedScene)
                             .id(scene.id)
                         }
                         if model.scenes.isEmpty { EmptyScript() }
                     }
                     .frame(width: fontSize * 40)
-                    .padding(.vertical, 56)
+                    .padding(.top, 56)
+                    .padding(.bottom, typewriter ? 420 : 56)
                     .frame(maxWidth: .infinity)
                 }
             }
             .overlay(alignment: .bottomTrailing) { StatusLine().padding(.trailing, 20).padding(.bottom, 14) }
+            .overlay(alignment: .bottom) { ToastView().padding(.bottom, 20) }
             .onAppear { scroll(proxy) }
             .onChange(of: model.scrollTarget) { scroll(proxy) }
         }
@@ -124,11 +141,14 @@ struct SceneList: View {
             VStack(alignment: .leading, spacing: 2) {
                 ForEach(Array(model.scenes.enumerated()), id: \.element.id) { i, scene in
                     Button {
+                        model.focus(scene.id, atEnd: false)
                         withAnimation(.easeInOut(duration: 0.3)) { proxy.scrollTo(scene.id, anchor: .top) }
                     } label: {
                         HStack(alignment: .firstTextBaseline, spacing: 10) {
                             Text("\(i + 1)").monospacedDigit().foregroundStyle(.secondary).frame(width: 20, alignment: .trailing)
                             Text(scene.heading).lineLimit(1).truncationMode(.tail)
+                                .foregroundStyle(scene.id == model.focusedScene ? Color(nsColor: Theme.accent) : .primary)
+                                .fontWeight(scene.id == model.focusedScene ? .semibold : .regular)
                         }
                         .font(.system(size: 12))
                         .padding(.vertical, 5)
@@ -345,5 +365,45 @@ struct EmptyScript: View {
         }
         .padding(.top, 24)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// Single-scene view: which scene this is, with previous and next.
+struct SingleSceneHeader: View {
+    @Environment(ProjectModel.self) private var model
+    let index: Int
+    var body: some View {
+        HStack(spacing: 10) {
+            Button { if index > 0 { model.focus(model.scenes[index - 1].id, atEnd: false) } } label: { Image(systemName: "chevron.left") }
+                .disabled(index == 0).help("Previous scene (⌘[)")
+            Text("Scene \(index + 1) of \(model.scenes.count)").font(.system(size: 11)).foregroundStyle(.secondary)
+            Button { if index + 1 < model.scenes.count { model.focus(model.scenes[index + 1].id, atEnd: false) } } label: { Image(systemName: "chevron.right") }
+                .disabled(index + 1 >= model.scenes.count).help("Next scene (⌘])")
+        }
+        .buttonStyle(.borderless)
+        .padding(.bottom, 28)
+        .frame(maxWidth: .infinity)
+    }
+}
+
+/// "Moved to Graveyard/… · Undo", bottom centre, for a few seconds.
+struct ToastView: View {
+    @Environment(ProjectModel.self) private var model
+    var body: some View {
+        if let t = model.toast {
+            HStack(spacing: 14) {
+                Text(t.message).font(.system(size: 12))
+                if let undo = t.undo {
+                    Button("Undo") { undo(); model.toast = nil }
+                        .buttonStyle(.plain).font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Color(red: 0.66, green: 0.77, blue: 0.88))
+                }
+            }
+            .foregroundStyle(Color(nsColor: Theme.paper))
+            .padding(.horizontal, 14).padding(.vertical, 9)
+            .background(Color.primary.opacity(0.88), in: RoundedRectangle(cornerRadius: 8))
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .accessibilityElement(children: .combine)
+        }
     }
 }

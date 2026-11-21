@@ -4,7 +4,17 @@ import SwiftUI
 
 enum Theme {
     static let paper = NSColor(name: nil) { $0.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? NSColor(srgbRed: 0.11, green: 0.11, blue: 0.118, alpha: 1) : NSColor(srgbRed: 0.984, green: 0.984, blue: 0.98, alpha: 1) }
-    static let accent = NSColor(srgbRed: 0.184, green: 0.365, blue: 0.541, alpha: 1)
+    static let accents: [(name: String, color: NSColor)] = [
+        ("Ink blue", NSColor(srgbRed: 0.184, green: 0.365, blue: 0.541, alpha: 1)),
+        ("Brick", NSColor(srgbRed: 0.706, green: 0.329, blue: 0.227, alpha: 1)),
+        ("Fern", NSColor(srgbRed: 0.247, green: 0.490, blue: 0.345, alpha: 1)),
+        ("Violet", NSColor(srgbRed: 0.420, green: 0.357, blue: 0.659, alpha: 1)),
+        ("Graphite", NSColor(srgbRed: 0.29, green: 0.286, blue: 0.271, alpha: 1)),
+    ]
+    static var accent: NSColor {
+        let name = UserDefaults.standard.string(forKey: "accentColour") ?? ""
+        return accents.first { $0.name == name }?.color ?? accents[0].color
+    }
     /// Binder, corkboard and welcome side panels: a shade darker than the page.
     static let paper2 = dynamic(light: (0.957, 0.953, 0.941), dark: (0.137, 0.137, 0.145))
     /// Hairlines and card borders.
@@ -96,9 +106,16 @@ struct ScriptTextView: NSViewRepresentable {
     @Binding var text: String
     var fontName: String
     var fontSize: CGFloat
+    var sceneID = UUID()
     var onEndEditing: () -> Void = {}
     var onBeginEditing: () -> Void = {}
-    var onBury: (String) -> Void = { _ in }
+    /// Hands cut text to the Graveyard; returns how to take it back out (registered with the same undo).
+    var onBury: (String) -> (() -> Void) = { _ in {} }
+    /// Arrow up off the first line (true) or down off the last (false). Returns true when another scene took focus.
+    var onLeave: (Bool) -> Bool = { _ in false }
+    var focusRequest: ProjectModel.FocusRequest?
+    var typewriter = false
+    var dim = false
     /// Whole-line suggestions for (text before the cursor on this line, previous line is blank).
     var suggest: (String, Bool) -> [String] = { _, _ in [] }
 
@@ -106,7 +123,8 @@ struct ScriptTextView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSTextView {
         let tv = SceneTextView(usingTextLayoutManager: false)
-        tv.onBury = { [weak coordinator = context.coordinator] in coordinator?.parent.onBury($0) }
+        tv.onBury = { [weak coordinator = context.coordinator] in coordinator?.parent.onBury($0) ?? {} }
+        tv.onLeave = { [weak coordinator = context.coordinator] in coordinator?.parent.onLeave($0) ?? false }
         tv.isRichText = false
         tv.allowsUndo = true
         tv.drawsBackground = false
@@ -137,6 +155,18 @@ struct ScriptTextView: NSViewRepresentable {
         } else if sizeChanged {
             context.coordinator.restyle(tv)
         }
+        tv.insertionPointColor = Theme.accent
+        if old.dim != dim { context.coordinator.applyDim(tv) }
+        // Focus handed over from the scene above or below (arrow keys), or from the scene list.
+        if let r = focusRequest, r.id == sceneID, r.token != context.coordinator.handledFocus {
+            context.coordinator.handledFocus = r.token
+            DispatchQueue.main.async {
+                tv.window?.makeFirstResponder(tv)
+                let len = (tv.string as NSString).length
+                tv.setSelectedRange(NSRange(location: r.atEnd ? len : 0, length: 0))
+                tv.scrollRangeToVisible(tv.selectedRange())
+            }
+        }
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView tv: NSTextView, context: Context) -> CGSize? {
@@ -152,6 +182,7 @@ struct ScriptTextView: NSViewRepresentable {
         var parent: ScriptTextView
         init(_ parent: ScriptTextView) { self.parent = parent }
 
+        var handledFocus = -1
         private var completing = false
         private var typedCharacter = false
 
@@ -194,8 +225,46 @@ struct ScriptTextView: NSViewRepresentable {
             return parent.suggest(line, afterBlank)
         }
 
-        func textDidEndEditing(_ notification: Notification) { parent.onEndEditing() }
+        func textDidEndEditing(_ notification: Notification) {
+            parent.onEndEditing()
+            if let tv = notification.object as? NSTextView { clearDim(tv) }
+        }
         func textDidBeginEditing(_ notification: Notification) { parent.onBeginEditing() }
+
+        func textViewDidChangeSelection(_ notification: Notification) {
+            guard let tv = notification.object as? SceneTextView, tv.window?.firstResponder === tv else { return }
+            applyDim(tv)
+            if parent.typewriter { centreCaret(tv) }
+        }
+
+        /// Typewriter scrolling: keep the line being written in the middle of the window.
+        func centreCaret(_ tv: SceneTextView) {
+            guard let sv = tv.enclosingScrollView, let line = tv.caretLineRect() else { return }
+            let r = tv.convert(line, to: sv.contentView)
+            var origin = sv.contentView.bounds.origin
+            origin.y += r.midY - sv.contentView.bounds.midY
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.12
+                sv.contentView.animator().setBoundsOrigin(origin)
+            }
+            sv.reflectScrolledClipView(sv.contentView)
+        }
+
+        /// Focus mode: everything but the paragraph being written fades back (display only, the text is untouched).
+        func applyDim(_ tv: NSTextView) {
+            guard let lm = tv.layoutManager else { return }
+            let ns = tv.string as NSString
+            lm.removeTemporaryAttribute(.foregroundColor, forCharacterRange: NSRange(location: 0, length: ns.length))
+            guard parent.dim, tv.window?.firstResponder === tv, ns.length > 0 else { return }
+            let here = ns.paragraphRange(for: NSRange(location: min(tv.selectedRange().location, ns.length), length: 0))
+            lm.addTemporaryAttribute(.foregroundColor, value: NSColor.tertiaryLabelColor, forCharacterRange: NSRange(location: 0, length: here.location))
+            let after = here.location + here.length
+            lm.addTemporaryAttribute(.foregroundColor, value: NSColor.tertiaryLabelColor, forCharacterRange: NSRange(location: after, length: ns.length - after))
+        }
+
+        func clearDim(_ tv: NSTextView) {
+            tv.layoutManager?.removeTemporaryAttribute(.foregroundColor, forCharacterRange: NSRange(location: 0, length: (tv.string as NSString).length))
+        }
 
         func textView(_ view: NSTextView, menu: NSMenu, for event: NSEvent, at charIndex: Int) -> NSMenu? {
             guard view.selectedRange().length > 0 else { return menu }
@@ -217,7 +286,30 @@ struct ScriptTextView: NSViewRepresentable {
 /// A scene's text view. "Send to Graveyard" (context menu, or Edit menu ⇧⌘G via the responder chain)
 /// cuts the selection, undoably, and hands it to the Graveyard.
 final class SceneTextView: NSTextView {
-    var onBury: ((String) -> Void)?
+    var onBury: ((String) -> (() -> Void))?
+    var onLeave: ((Bool) -> Bool)?
+
+    /// The line fragment the caret is on, in text view coordinates.
+    func caretLineRect() -> NSRect? {
+        guard let lm = layoutManager else { return nil }
+        let len = (string as NSString).length
+        let loc = selectedRange().location
+        if loc >= len, !lm.extraLineFragmentRect.isEmpty { return lm.extraLineFragmentRect }
+        guard lm.numberOfGlyphs > 0 else { return .zero }
+        return lm.lineFragmentRect(forGlyphAt: lm.glyphIndexForCharacter(at: min(loc, len - 1)), effectiveRange: nil)
+    }
+
+    // Arrow keys carry on into the scene above or below, so the stacked scenes read as one script.
+    override func moveUp(_ sender: Any?) {
+        if let r = caretLineRect(), r.minY <= 0.5, onLeave?(true) == true { return }
+        super.moveUp(sender)
+    }
+
+    override func moveDown(_ sender: Any?) {
+        if let r = caretLineRect(), let lm = layoutManager, let tc = textContainer,
+           r.maxY >= lm.usedRect(for: tc).maxY - 0.5, onLeave?(false) == true { return }
+        super.moveDown(sender)
+    }
 
     /// Completions replace the whole line typed so far ("INT. HO" → "INT. HOUSE"), not just the last word.
     override var rangeForUserCompletion: NSRange {
@@ -229,10 +321,14 @@ final class SceneTextView: NSTextView {
     @objc func sendToGraveyard(_ sender: Any?) {
         let range = selectedRange()
         guard range.length > 0, let text = (string as NSString?)?.substring(with: range) else { return }
+        // One undo step: puts the text back and takes it out of the Graveyard file again.
+        undoManager?.beginUndoGrouping()
         if shouldChangeText(in: range, replacementString: "") {
             textStorage?.replaceCharacters(in: range, with: "")
             didChangeText()
         }
-        onBury?(text)
+        if let restore = onBury?(text) { undoManager?.registerUndo(withTarget: self) { _ in restore() } }
+        undoManager?.endUndoGrouping()
+        undoManager?.setActionName("Send to Graveyard")
     }
 }

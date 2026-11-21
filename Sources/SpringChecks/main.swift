@@ -313,5 +313,11 @@ check(fdx.contains("<Paragraph Type=\"Transition\" StartsNewPage=\"Yes\"><Text>C
 check(fdx.contains("<Text>BAR &lt;ONE&gt;</Text>"), "fdx title page")
 check((try? XMLDocument(xmlString: fdx)) != nil, "fdx is well-formed XML")
 
+// Scene naming
+let nameScene = SceneFile(url: URL(filePath: "/nonexistent/Scenes/x.fountain.md"), file: MarkdownFile(text: "INT. BAR - NIGHT\n"))
+check(ProjectIO.targetURL(for: nameScene, number: 3, naming: .numbered).lastPathComponent == "003 INT. BAR - NIGHT.fountain.md", "numbered name")
+check(ProjectIO.targetURL(for: nameScene, number: 3, naming: .keep).lastPathComponent == "x.fountain.md", "keep name")
+check(ProjectIO.targetURL(for: nameScene, number: 3, naming: .heading).lastPathComponent == "INT. BAR - NIGHT.fountain.md", "heading name")
+
 try? FileManager.default.removeItem(at: dir)
 print("SpringChecks: all passed")
