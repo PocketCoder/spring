@@ -72,17 +72,21 @@ final class ProjectModel {
         pending[id] = Task { [weak self] in
             try? await Task.sleep(for: .seconds(1))
             guard !Task.isCancelled else { return }
-            self?.save(id)
+            self?.save(id, rename: false)
         }
     }
 
-    func save(_ id: UUID) {
+    /// Typing saves without renaming; the rename (and link fix-up) waits until you leave the scene.
+    func save(_ id: UUID, rename: Bool) {
+        pending[id]?.cancel()
         pending[id] = nil
         guard let i = scenes.firstIndex(where: { $0.id == id }), !conflicts.contains(id) else { return }
         var scene = scenes[i]
         do {
-            switch try ProjectIO.save(&scene, number: i + 1, marker: marker) {
-            case .saved: scenes[i] = scene
+            switch try ProjectIO.save(&scene, number: i + 1, marker: marker, rename: rename) {
+            case .saved(let oldURL):
+                scenes[i] = scene
+                if let oldURL, let root = projectURL { ProjectIO.updateLinks(under: root, from: oldURL, to: scene.url) }
             case .conflict: conflicts.insert(id)
             }
         } catch {
@@ -91,7 +95,16 @@ final class ProjectModel {
     }
 
     func saveAll() {
-        for (id, task) in pending { task.cancel(); save(id) }
+        for id in scenes.map(\.id) where pending[id] != nil || needsRename(id) { save(id, rename: true) }
+    }
+
+    func finishEditing(_ id: UUID) {
+        if pending[id] != nil || needsRename(id) { save(id, rename: true) }
+    }
+
+    private func needsRename(_ id: UUID) -> Bool {
+        guard let s = scenes.first(where: { $0.id == id }) else { return false }
+        return ProjectIO.targetURL(for: s).lastPathComponent != s.url.lastPathComponent
     }
 
     /// Conflict: overwrite the file on disk with Spring's version.
@@ -99,7 +112,7 @@ final class ProjectModel {
         guard let i = scenes.firstIndex(where: { $0.id == id }) else { return }
         scenes[i].knownModDate = nil
         conflicts.remove(id)
-        save(id)
+        save(id, rename: true)
     }
 
     /// Conflict: drop Spring's edits and load the file from disk.

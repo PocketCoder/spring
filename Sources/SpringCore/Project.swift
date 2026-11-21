@@ -8,8 +8,17 @@ public struct SceneFile: Identifiable, Sendable {
     public var file: MarkdownFile
     /// Modification date when Spring last read or wrote the file; a newer date on disk means someone else edited it.
     public var knownModDate: Date?
+    /// `.fountain`/`.txt` have no frontmatter: their number lives in a hidden first-line note, `[[scene: 3]]`.
+    public var noteNumber: Int?
 
-    public var number: Int? { file.value("scene").flatMap { Int($0) } }
+    public var number: Int? { file.value("scene").flatMap { Int($0) } ?? noteNumber }
+    var isMarkdown: Bool { url.lastPathComponent.lowercased().hasSuffix(".md") }
+
+    /// What goes on disk: frontmatter for markdown, the scene note otherwise.
+    public var diskText: String {
+        guard !isMarkdown, let n = noteNumber else { return file.text }
+        return "[[scene: \(n)]]\n" + file.text
+    }
     public var heading: String { Fountain.headings(in: file.body).first ?? ProjectIO.stem(of: url) }
 }
 
@@ -32,11 +41,44 @@ public enum ProjectIO {
     }
 
     public static func read(_ url: URL) throws -> SceneFile {
-        SceneFile(url: url, file: MarkdownFile(text: try String(contentsOf: url, encoding: .utf8)), knownModDate: modDate(url))
+        var scene = SceneFile(url: url, file: MarkdownFile(text: try String(contentsOf: url, encoding: .utf8)), knownModDate: modDate(url))
+        if !scene.isMarkdown, let match = scene.file.body.firstMatch(of: #/^\[\[scene:\s*(\d+)\]\]\n?/#) {
+            scene.noteNumber = Int(match.1)
+            scene.file.body.removeSubrange(match.range)
+        }
+        return scene
+    }
+
+    /// The name Obsidian uses in `[[links]]`: the file name, minus `.md`.
+    public static func linkName(of url: URL) -> String {
+        let name = url.lastPathComponent
+        return name.lowercased().hasSuffix(".md") ? String(name.dropLast(3)) : name
+    }
+
+    /// Rewrites `[[old]]`, `[[old|alias]]`, `[[old#heading]]` and `[[folder/old]]` links.
+    public static func rewriteLinks(in text: String, from old: String, to new: String) -> String {
+        guard let re = try? Regex("\\[\\[((?:[^\\]|#\\n]*/)?)" + NSRegularExpression.escapedPattern(for: old) + "(?=[\\]|#])") else { return text }
+        return text.replacing(re) { "[[" + String($0.output[1].substring ?? "") + new }
+    }
+
+    /// After a rename, fixes links in every `.md` and `.canvas` file under `root`.
+    /// ponytail: only the folder Spring can reach (the project, or the vault once it is chosen in Settings);
+    /// markdown-style `[text](path.md)` links are not rewritten.
+    public static func updateLinks(under root: URL, from oldURL: URL, to newURL: URL) {
+        let oldLink = linkName(of: oldURL), newLink = linkName(of: newURL)
+        let oldFile = oldURL.lastPathComponent, newFile = newURL.lastPathComponent
+        guard let files = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else { return }
+        for case let url as URL in files {
+            let ext = url.pathExtension.lowercased()
+            guard ext == "md" || ext == "canvas", let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
+            let updated = ext == "md"
+                ? rewriteLinks(in: text, from: oldLink, to: newLink)
+                : text.replacingOccurrences(of: "/\(oldFile)\"", with: "/\(newFile)\"").replacingOccurrences(of: "\"\(oldFile)\"", with: "\"\(newFile)\"")
+            if updated != text { try? updated.write(to: url, atomically: true, encoding: .utf8) }
+        }
     }
 
     /// Scenes ordered by their `scene` property, then file name.
-    /// ponytail: `.fountain`/`.txt` carry no frontmatter, so they sort by name only.
     public static func loadScenes(in project: URL) throws -> [SceneFile] {
         let dir = project.appending(path: "Scenes")
         return try FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil, options: .skipsHiddenFiles)
@@ -61,26 +103,30 @@ public enum ProjectIO {
         }
     }
 
-    public enum SaveResult: Equatable { case saved, conflict }
+    public enum SaveResult: Equatable { case saved(renamedFrom: URL?), conflict }
 
-    /// Writes the scene, sets its number and Fountain marker, and renames it after its first heading.
+    /// Writes the scene and sets its number and Fountain marker. With `rename`, also renames it after its
+    /// first heading (callers then fix links with `updateLinks`).
     /// Returns `.conflict` without writing if the file changed on disk since Spring last saw it.
-    public static func save(_ scene: inout SceneFile, number: Int, marker: FountainMarker) throws -> SaveResult {
+    public static func save(_ scene: inout SceneFile, number: Int, marker: FountainMarker, rename: Bool = true) throws -> SaveResult {
         if let disk = modDate(scene.url), let known = scene.knownModDate, disk > known { return .conflict }
         let name = scene.url.lastPathComponent.lowercased()
+        if !scene.isMarkdown { scene.noteNumber = number }
         if name.hasSuffix(".md") {
             scene.file.set("scene", String(number))
             if !name.hasSuffix(".fountain.md") {
                 marker == .tag ? scene.file.ensureListItem("tags", "fountain") : scene.file.ensureListItem("cssclasses", "fountain")
             }
         }
-        try scene.file.text.write(to: scene.url, atomically: true, encoding: .utf8)
+        try scene.diskText.write(to: scene.url, atomically: true, encoding: .utf8)
+        var renamedFrom: URL?
         let target = targetURL(for: scene)
-        if target.lastPathComponent != scene.url.lastPathComponent {
+        if rename, target.lastPathComponent != scene.url.lastPathComponent {
             try FileManager.default.moveItem(at: scene.url, to: target)
+            renamedFrom = scene.url
             scene.url = target
         }
         scene.knownModDate = modDate(scene.url)
-        return .saved
+        return .saved(renamedFrom: renamedFrom)
     }
 }

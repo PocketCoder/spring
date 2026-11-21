@@ -76,6 +76,23 @@ jobs:
         run: |
           mkdir -p out
           ditto -c -k --keepParent build/Spring.app "out/Spring-$VERSION-macOS.zip"
+          echo "$VERSION" > out/version.txt
+
+      # Sparkle checks every update against the public key in the app, so the zip is signed with the matching private
+      # key (SPARKLE_PRIVATE_KEY). The signature travels in out/ for the publish job's appcast; it is not uploaded.
+      - name: Sign update (Sparkle)
+        if: env.PUBLISH == 'true'
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SPARKLE_PRIVATE_KEY" ]; then
+            echo "::warning::SPARKLE_PRIVATE_KEY is not set, so no update feed is published"
+            exit 0
+          fi
+          printf '%s' "$SPARKLE_PRIVATE_KEY" > "$RUNNER_TEMP/sparkle.key"
+          .build/artifacts/sparkle/Sparkle/bin/sign_update "out/Spring-$VERSION-macOS.zip" --ed-key-file "$RUNNER_TEMP/sparkle.key" | tee out/sparkle-sig.txt
+          rm -f "$RUNNER_TEMP/sparkle.key"
 
       - uses: actions/upload-artifact@v7
         if: env.PUBLISH == 'true'
@@ -106,7 +123,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           gh release delete nightly --cleanup-tag --yes || true
-          gh release create nightly out/* --prerelease --target "$GITHUB_SHA" \
+          gh release create nightly out/*.zip --prerelease --target "$GITHUB_SHA" \
             --title "Spring nightly" \
             --notes "Built from ${GITHUB_SHA::7}. Ad-hoc signed: right-click the app and choose Open the first time."
 
@@ -115,4 +132,40 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: gh release create "$GITHUB_REF_NAME" out/* --title "Spring $GITHUB_REF_NAME" --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" out/*.zip --title "Spring $GITHUB_REF_NAME" --generate-notes
+
+      # SUFeedURL in the app points here. sparkle:version is the build number (CFBundleVersion = run number).
+      - name: Write nightly-appcast.xml
+        if: github.ref == 'refs/heads/main' && hashFiles('out/sparkle-sig.txt') != ''
+        run: |
+          set -euo pipefail
+          version="$(cat out/version.txt)"
+          sig="$(tr -d '\n' < out/sparkle-sig.txt)"
+          mkdir -p pages
+          cat > pages/nightly-appcast.xml <<XML
+          <?xml version="1.0" encoding="utf-8"?>
+          <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+            <channel>
+              <title>Spring nightly</title>
+              <item>
+                <title>${version}</title>
+                <pubDate>$(date -R)</pubDate>
+                <sparkle:version>${{ github.run_number }}</sparkle:version>
+                <sparkle:shortVersionString>${version}</sparkle:shortVersionString>
+                <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+                <link>https://github.com/${{ github.repository }}/commit/${{ github.sha }}</link>
+                <enclosure url="https://github.com/${{ github.repository }}/releases/download/nightly/Spring-${version}-macOS.zip" ${sig} type="application/octet-stream"/>
+              </item>
+            </channel>
+          </rss>
+          XML
+          cat pages/nightly-appcast.xml
+
+      - name: Publish the feed to gh-pages
+        if: hashFiles('pages/*') != ''
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ github.token }}
+          publish_branch: gh-pages
+          publish_dir: pages
+          keep_files: true

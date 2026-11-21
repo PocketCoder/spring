@@ -62,7 +62,9 @@ try "ignored".write(to: scenesDir.appending(path: "image.png"), atomically: true
 var scenes = try ProjectIO.loadScenes(in: dir)
 check(scenes.map(\.heading) == ["INT. BAR - NIGHT", "EXT. HOUSE - DAY"], "order by scene property")
 
-check(try ProjectIO.save(&scenes[1], number: 2, marker: .tag) == .saved, "save")
+check(try ProjectIO.save(&scenes[1], number: 2, marker: .tag, rename: false) == .saved(renamedFrom: nil), "save without rename")
+check(scenes[1].url.lastPathComponent == "a.md", "not renamed while typing")
+if case .saved(let old) = try ProjectIO.save(&scenes[1], number: 2, marker: .tag) { check(old?.lastPathComponent == "a.md", "rename reports old name") } else { check(false, "save + rename") }
 check(scenes[1].url.lastPathComponent == "EXT. HOUSE - DAY.md", "renamed after heading")
 let saved = try String(contentsOf: scenes[1].url, encoding: .utf8)
 check(saved == "---\nscene: 2\ntags:\n  - fountain\n---\nEXT. HOUSE - DAY\n", "md gets tag: \(saved)")
@@ -73,6 +75,25 @@ check(!fm.contains("fountain\n"), ".fountain.md gets no tag")
 
 scenes[0].knownModDate = Date.distantPast
 check(try ProjectIO.save(&scenes[0], number: 1, marker: .tag) == .conflict, "conflict when disk is newer")
+
+// Links are rewritten after a rename
+check(ProjectIO.rewriteLinks(in: "See [[a]], [[a|the house]], [[Scenes/a#Beat]], [[ab]] and [[a.fountain]].", from: "a", to: "EXT. HOUSE - DAY")
+      == "See [[EXT. HOUSE - DAY]], [[EXT. HOUSE - DAY|the house]], [[Scenes/EXT. HOUSE - DAY#Beat]], [[ab]] and [[a.fountain]].", "link rewrite")
+check(ProjectIO.linkName(of: URL(filePath: "/x/INT. BAR.fountain.md")) == "INT. BAR.fountain", "link name drops .md only")
+let note = dir.appending(path: "Notes.md"), board = dir.appending(path: "Board.canvas")
+try "Billy lives in [[old.fountain]].".write(to: note, atomically: true, encoding: .utf8)
+try #"{"nodes":[{"type":"file","file":"p/Scenes/old.fountain"}]}"#.write(to: board, atomically: true, encoding: .utf8)
+ProjectIO.updateLinks(under: dir, from: scenesDir.appending(path: "old.fountain"), to: scenesDir.appending(path: "INT. SHOP - DAY.fountain"))
+check(try String(contentsOf: note, encoding: .utf8) == "Billy lives in [[INT. SHOP - DAY.fountain]].", "note link updated")
+check(try String(contentsOf: board, encoding: .utf8).contains("Scenes/INT. SHOP - DAY.fountain\""), "canvas link updated")
+
+// .fountain keeps its number in a hidden note
+let plain = scenesDir.appending(path: "c.fountain")
+try "[[scene: 7]]\nINT. SHOP - DAY\n".write(to: plain, atomically: true, encoding: .utf8)
+var p = try ProjectIO.read(plain)
+check(p.number == 7 && p.file.body == "INT. SHOP - DAY\n", "note read and hidden from the editor")
+_ = try ProjectIO.save(&p, number: 4, marker: .tag, rename: false)
+check(try String(contentsOf: plain, encoding: .utf8) == "[[scene: 4]]\nINT. SHOP - DAY\n", "note written back")
 
 try? FileManager.default.removeItem(at: dir)
 print("SpringChecks: all passed")

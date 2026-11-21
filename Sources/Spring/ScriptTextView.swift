@@ -59,6 +59,7 @@ enum ScriptStyler {
 struct ScriptTextView: NSViewRepresentable {
     @Binding var text: String
     var fontSize: CGFloat
+    var onEndEditing: () -> Void = {}
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -109,6 +110,8 @@ struct ScriptTextView: NSViewRepresentable {
             restyle(tv)
             parent.text = tv.string
         }
+
+        func textDidEndEditing(_ notification: Notification) { parent.onEndEditing() }
 
         func restyle(_ tv: NSTextView) {
             guard let storage = tv.textStorage else { return }

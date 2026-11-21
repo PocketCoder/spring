@@ -29,7 +29,8 @@ struct ContentView: View {
                             if model.conflicts.contains(scene.id) { ConflictBanner(scene: scene) }
                             ScriptTextView(
                                 text: Binding(get: { model.body(of: scene.id) }, set: { model.update(scene.id, body: $0) }),
-                                fontSize: fontSize
+                                fontSize: fontSize,
+                                onEndEditing: { model.finishEditing(scene.id) }
                             )
                             .id(scene.id)
                         }
