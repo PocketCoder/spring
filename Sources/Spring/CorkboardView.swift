@@ -7,6 +7,30 @@ struct CorkboardView: View {
     @Environment(ProjectModel.self) private var model
 
     var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Picker("Board", selection: Binding(get: { model.showBeats }, set: { model.showBeats = $0 })) {
+                    Text("Scenes").tag(false)
+                    Text("Beats").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+                if model.showBeats {
+                    Text("Beats/Board.canvas · also opens in Obsidian").font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                if model.showBeats { BeatTemplateMenu() } else { Button("New Scene") { model.newScene() } }
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 10)
+            Divider()
+            if model.showBeats { BeatsView() } else { scenes }
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private var scenes: some View {
         HStack(spacing: 0) {
             ScrollView {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 220, maximum: 320), spacing: 24)], spacing: 24) {

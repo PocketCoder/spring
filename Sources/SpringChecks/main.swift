@@ -146,5 +146,33 @@ check(try ProjectIO.write(&raw) == .saved(renamedFrom: nil), "note saved")
 check(try String(contentsOf: noteURL, encoding: .utf8) == "---\ntags: [x]\n---\nIdea", "raw text written as is")
 check(try ProjectIO.newNote(in: proj.appending(path: "Notes")).lastPathComponent == "Untitled 2.md", "new note numbered")
 
+// Beats beats (.canvas)
+var beats = CanvasBoard()
+beats.insert(BeatTemplate.all[1])
+var cols = beats.columns
+check(cols.map(\.label) == ["Act One", "Act Two A", "Act Two B", "Act Three"], "template columns")
+check(cols.map { $0.cards.count } == [5, 4, 3, 3], "save the cat has 15 beats")
+check(cols[0].cards.map(\.title) == ["Opening Image", "Theme Stated", "Set-up", "Catalyst", "Debate"], "cards in order")
+let catalyst = cols[0].cards[3].id
+beats.move(catalyst, to: cols[1].id, before: cols[1].cards[0].id)
+cols = beats.columns
+check(cols[0].cards.count == 4 && cols[1].cards.first?.title == "Catalyst", "move between columns")
+beats.move(catalyst, to: cols[1].id, before: nil)
+check(beats.columns[1].cards.last?.title == "Catalyst", "move to end")
+let fileCard = beats.addCard(file: "my-project/Scenes/INT. BAR - NIGHT.fountain.md", to: cols[3].id)
+check(beats.columns[3].cards.last?.file == "my-project/Scenes/INT. BAR - NIGHT.fountain.md", "file card")
+beats.setText(cols[2].cards[0].id, "## Bad Guys Close In\n\nThe landlord calls.")
+check(beats.columns[2].cards[0].detail == "The landlord calls.", "card detail")
+beats.remove(fileCard)
+check(beats.columns[3].cards.count == 3, "card removed")
+// Round trip keeps unknown keys and Obsidian-made layouts
+let obsidian = ###"{"nodes":[{"id":"g","type":"group","label":"Act One","x":0,"y":0,"width":400,"height":600,"custom":true},{"id":"a","type":"text","text":"## B","x":20,"y":300,"width":200,"height":100},{"id":"b","type":"text","text":"## A","x":20,"y":20,"width":200,"height":100},{"id":"c","type":"text","text":"loose","x":900,"y":0,"width":200,"height":100}],"edges":[{"id":"e","fromNode":"a","toNode":"b"}],"extra":1}"###
+var ob = try CanvasBoard(data: Data(obsidian.utf8))
+check(ob.columns.map(\.label) == ["Act One", "Not in a group"] && ob.columns[0].cards.map(\.title) == ["A", "B"], "Obsidian layout read by position")
+ob.remove("a")
+let again = try JSONSerialization.jsonObject(with: ob.data) as! [String: Any]
+check(again["extra"] as? Int == 1 && ((again["nodes"] as! [[String: Any]])[0]["custom"] as? Bool) == true, "unknown keys kept")
+check((again["edges"] as! [Any]).isEmpty, "edges to removed card dropped")
+
 try? FileManager.default.removeItem(at: dir)
 print("SpringChecks: all passed")

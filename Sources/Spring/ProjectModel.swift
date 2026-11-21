@@ -18,7 +18,7 @@ final class ProjectModel {
 
     init() {
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.saveAll(); self?.saveNote() }
+            MainActor.assumeIsolated { self?.saveAll(); self?.saveNote(); self?.saveBoard() }
         }
     }
 
@@ -57,6 +57,7 @@ final class ProjectModel {
             note = nil
             viewMode = .script
             tree = ProjectIO.tree(at: url, folderOrder: Prefs.projectFolders)
+            loadBoard()
             projectURL = url
             conflicts = []
             errorMessage = nil
@@ -124,7 +125,7 @@ final class ProjectModel {
             case .saved(let oldURL):
                 scenes[i] = scene
                 if let oldURL, let root = projectURL {
-                    ProjectIO.updateLinks(under: root, from: oldURL, to: scene.url)
+                    ProjectIO.updateLinks(under: vaultContaining(root) ?? root, from: oldURL, to: scene.url)
                     refreshTree()
                 }
             case .conflict: conflicts.insert(id)
@@ -301,5 +302,103 @@ final class ProjectModel {
             errorMessage = "Couldn't move \(url.lastPathComponent) to the Graveyard: \(error.localizedDescription)"
         }
         refreshTree()
+    }
+
+    // MARK: Obsidian vault (optional)
+
+    /// Resolved once per launch; access stays open for the app's lifetime.
+    static let vault: URL? = {
+        guard let data = UserDefaults.standard.data(forKey: Prefs.vaultBookmark) else { return nil }
+        var stale = false
+        guard let url = try? URL(resolvingBookmarkData: data, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &stale) else { return nil }
+        _ = url.startAccessingSecurityScopedResource()
+        return url
+    }()
+
+    static func chooseVault() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.prompt = "Use as Vault"
+        panel.message = "Choose your Obsidian vault (the folder that contains .obsidian)."
+        guard panel.runModal() == .OK, let url = panel.url,
+              let data = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil) else { return }
+        UserDefaults.standard.set(data, forKey: Prefs.vaultBookmark)
+        UserDefaults.standard.set(url.path, forKey: Prefs.vaultPath)
+        _ = url.startAccessingSecurityScopedResource()
+    }
+
+    static func clearVault() {
+        UserDefaults.standard.removeObject(forKey: Prefs.vaultBookmark)
+        UserDefaults.standard.removeObject(forKey: Prefs.vaultPath)
+    }
+
+    /// The vault, if this project is inside it.
+    func vaultContaining(_ url: URL) -> URL? {
+        guard let path = UserDefaults.standard.string(forKey: Prefs.vaultPath), !path.isEmpty,
+              url.standardizedFileURL.path.hasPrefix(path.hasSuffix("/") ? path : path + "/") else { return nil }
+        _ = Self.vault
+        return URL(filePath: path, directoryHint: .isDirectory)
+    }
+
+    /// Path as Obsidian writes it in a canvas: relative to the vault, or "<project>/…" when no vault is set.
+    func vaultRelativePath(_ url: URL) -> String {
+        guard let root = projectURL else { return url.lastPathComponent }
+        let file = url.standardizedFileURL.path
+        if let vault = vaultContaining(root) { return String(file.dropFirst(vault.standardizedFileURL.path.count + 1)) }
+        return root.lastPathComponent + "/" + String(file.dropFirst(root.standardizedFileURL.path.count + 1))
+    }
+
+    // MARK: Beats board (Beats/Board.canvas)
+
+    var showBeats = false
+    var board: CanvasBoard?
+    var selectedCard: String?
+    @ObservationIgnored private var boardModDate: Date?
+    @ObservationIgnored private var boardSave: Task<Void, Never>?
+
+    var boardURL: URL? { projectURL?.appending(path: "Beats/Board.canvas") }
+
+    func loadBoard() {
+        guard let url = boardURL else { return }
+        board = (try? Data(contentsOf: url)).flatMap { try? CanvasBoard(data: $0) }
+        boardModDate = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
+    }
+
+    func editBoard(_ change: (inout CanvasBoard) -> Void) {
+        var b = board ?? CanvasBoard()
+        change(&b)
+        board = b
+        boardSave?.cancel()
+        boardSave = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(600))
+            guard !Task.isCancelled else { return }
+            self?.saveBoard()
+        }
+    }
+
+    func saveBoard() {
+        boardSave?.cancel()
+        boardSave = nil
+        guard let url = boardURL, let board else { return }
+        let disk = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
+        if let disk, let known = boardModDate, disk > known {
+            loadBoard()
+            errorMessage = "Board.canvas was changed outside Spring, so Spring reloaded it. Your last change to the board wasn't saved."
+            return
+        }
+        do {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try board.data.write(to: url, options: .atomic)
+            boardModDate = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
+            refreshTree()
+        } catch {
+            errorMessage = "Couldn't save the beat board: \(error.localizedDescription)"
+        }
+    }
+
+    /// The scene a file card points at, matched on its vault path or its end.
+    func scene(forCardFile file: String) -> SceneFile? {
+        scenes.first { vaultRelativePath($0.url) == file || $0.url.path.hasSuffix("/" + file) }
     }
 }

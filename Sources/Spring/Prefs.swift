@@ -9,6 +9,8 @@ enum Prefs {
     static let fontName = "scriptFont"
     static let fontSize = "fontSize"
     static let fadeSceneList = "fadeSceneList"
+    static let vaultBookmark = "vaultBookmark"
+    static let vaultPath = "vaultPath"            // shown in Settings only
 
     static var saveExt: String { UserDefaults.standard.string(forKey: saveFormat) ?? ".fountain.md" }
     static var fountainMarker: FountainMarker { FountainMarker(rawValue: UserDefaults.standard.string(forKey: marker) ?? "") ?? .tag }
@@ -31,12 +33,24 @@ struct SettingsView: View {
 }
 
 struct FilesSettings: View {
+    @AppStorage(Prefs.vaultPath) private var vaultPath = ""
     @AppStorage(Prefs.saveFormat) private var format = ".fountain.md"
     @AppStorage(Prefs.marker) private var marker = "tag"
     @AppStorage(Prefs.folders) private var folders = ProjectIO.defaultFolders.joined(separator: ", ")
 
     var body: some View {
         Form {
+            LabeledContent("Obsidian vault:") {
+                HStack {
+                    Text(vaultPath.isEmpty ? "None" : (vaultPath as NSString).abbreviatingWithTildeInPath)
+                        .foregroundStyle(vaultPath.isEmpty ? .secondary : .primary)
+                        .lineLimit(1).truncationMode(.middle)
+                    Button("Choose…") { ProjectModel.chooseVault() }
+                    if !vaultPath.isEmpty { Button("Clear") { ProjectModel.clearVault() } }
+                }
+            }
+            Text("Optional. Lets Spring fix links across the whole vault and write vault paths in beat boards.")
+                .font(.caption).foregroundStyle(.secondary)
             Picker("Save new scenes as:", selection: $format) {
                 ForEach(ProjectIO.sceneExtensions, id: \.self) { Text($0) }
             }
