@@ -1,0 +1,288 @@
+import Foundation
+
+/// Lays a Fountain script out as screenplay pages: standard indents on a 60-character line, Courier 12 pt at
+/// 6 lines an inch, headings kept with what follows, and dialogue split across pages with (MORE) and (CONT'D).
+/// Pure text layout; the PDF renderer only draws what this produces.
+public enum Screenplay {
+    // MARK: Model
+
+    public struct Run: Equatable, Sendable {
+        public var text: String
+        public var bold = false, italic = false, underline = false
+        public init(_ text: String, bold: Bool = false, italic: Bool = false, underline: Bool = false) {
+            self.text = text; self.bold = bold; self.italic = italic; self.underline = underline
+        }
+    }
+
+    public enum Align: Sendable { case left, center, right }
+
+    public struct Line: Equatable, Sendable {
+        public var runs: [Run]
+        /// Characters from the left margin.
+        public var indent: Int = 0
+        public var align: Align = .left
+        /// Printed in the margins beside a scene heading when scene numbers are on.
+        public var sceneNumber: String?
+        public var text: String { runs.map(\.text).joined() }
+    }
+
+    /// nil is a blank line.
+    public typealias Page = [Line?]
+
+    public struct Options: Sendable {
+        public var linesPerPage: Int
+        public var sceneNumbers: Bool
+        public init(linesPerPage: Int = 54, sceneNumbers: Bool = false) {
+            self.linesPerPage = linesPerPage; self.sceneNumbers = sceneNumbers
+        }
+    }
+
+    // Standard layout on a 60-character line (1.5" left margin, Courier 10 cpi).
+    static let actionWidth = 60
+    static let cueIndent = 22, dialogueIndent = 10, dialogueWidth = 35, parenIndent = 16, parenWidth = 26
+
+    // MARK: Emphasis
+
+    /// Fountain emphasis: ***bold italic***, **bold**, *italic*, _underline_; `\*` and `\_` are literal.
+    public static func runs(_ text: String) -> [Run] {
+        var out: [Run] = []
+        var bold = false, italic = false, underline = false
+        var buf = ""
+        func flush() { if !buf.isEmpty { out.append(Run(buf, bold: bold, italic: italic, underline: underline)); buf = "" } }
+        var chars = Array(text)[...]
+        while let c = chars.first {
+            if c == "\\", chars.count > 1, ["*", "_"].contains(chars[chars.startIndex + 1]) {
+                buf.append(chars[chars.startIndex + 1]); chars = chars.dropFirst(2); continue
+            }
+            if c == "*" {
+                let n = chars.prefix(3).prefix { $0 == "*" }.count
+                flush()
+                if n == 3 { bold.toggle(); italic.toggle() } else if n == 2 { bold.toggle() } else { italic.toggle() }
+                chars = chars.dropFirst(n); continue
+            }
+            if c == "_" { flush(); underline.toggle(); chars = chars.dropFirst(); continue }
+            buf.append(c); chars = chars.dropFirst()
+        }
+        flush()
+        return out
+    }
+
+    // MARK: Wrapping
+
+    /// Greedy word wrap on visible characters, keeping each word's styles. Over-long words are broken.
+    public static func wrap(_ runs: [Run], width: Int) -> [[Run]] {
+        typealias Ch = (c: Character, r: Run)
+        let chars: [Ch] = runs.flatMap { r in r.text.map { (c: $0, r: r) } }
+        var words: [[Ch]] = [], current: [Ch] = []
+        for ch in chars {
+            if ch.c == " " { if !current.isEmpty { words.append(current); current = [] } } else { current.append(ch) }
+        }
+        if !current.isEmpty { words.append(current) }
+        var lines: [[Ch]] = [], line: [Ch] = []
+        for var w in words {
+            while w.count > width {
+                if !line.isEmpty { lines.append(line); line = [] }
+                lines.append(Array(w.prefix(width))); w = Array(w.dropFirst(width))
+            }
+            if line.isEmpty { line = w }
+            else if line.count + 1 + w.count <= width { line.append((c: " ", r: w[0].r)); line += w }
+            else { lines.append(line); line = w }
+        }
+        if !line.isEmpty || lines.isEmpty { lines.append(line) }
+        return lines.map { chs in
+            var out: [Run] = []
+            for ch in chs {
+                if let last = out.last, last.bold == ch.r.bold, last.italic == ch.r.italic, last.underline == ch.r.underline {
+                    out[out.count - 1].text.append(ch.c)
+                } else {
+                    out.append(Run(String(ch.c), bold: ch.r.bold, italic: ch.r.italic, underline: ch.r.underline))
+                }
+            }
+            return out
+        }
+    }
+
+    // MARK: Blocks
+
+    enum Kind { case heading, action, dialogue, transition, centered, pageBreak }
+
+    struct Block {
+        var kind: Kind
+        var lines: [Line]
+        var spaceBefore: Int
+        /// Index of the cue line for dialogue blocks (always 0), used for (CONT'D).
+        var cue: String?
+    }
+
+    /// Strips what never prints: [[notes]], /* boneyard */, sections and synopses are dropped by kind.
+    static func printable(_ text: String) -> String {
+        var t = text
+        while let r = t.range(of: #"/\*[\s\S]*?\*/"#, options: .regularExpression) { t.removeSubrange(r) }
+        while let r = t.range(of: #"\[\[[\s\S]*?\]\]"#, options: .regularExpression) { t.removeSubrange(r) }
+        return t
+    }
+
+    static func blocks(from scripts: [String], sceneNumbers: Bool) -> [Block] {
+        var blocks: [Block] = []
+        var sceneNumber = 0
+        for script in scripts {
+            let text = printable(script)
+            let lines = Fountain.lines(text)
+            let kinds = Fountain.classify(text)
+            var i = 0
+            while i < lines.count {
+                let raw = lines[i], kind = kinds[i]
+                let t = raw.trimmingCharacters(in: .whitespaces)
+                switch kind {
+                case .blank, .section, .synopsis, .note:
+                    i += 1
+                case .pageBreak:
+                    blocks.append(Block(kind: .pageBreak, lines: [], spaceBefore: 0)); i += 1
+                case .heading:
+                    sceneNumber += 1
+                    var heading = t.hasPrefix(".") ? String(t.dropFirst()) : t
+                    var number = "\(sceneNumber)"
+                    if let r = heading.range(of: #"\s*#[^#]*#\s*$"#, options: .regularExpression) {
+                        // An explicit number ("#4A#") wins and is printed as written.
+                        number = heading[r].trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "#"))
+                        heading.removeSubrange(r)
+                    }
+                    var ls = wrap(runs(heading.uppercased()), width: actionWidth).map { Line(runs: $0.map { var r = $0; r.bold = true; return r }) }
+                    if sceneNumbers { ls[0].sceneNumber = number }
+                    blocks.append(Block(kind: .heading, lines: ls, spaceBefore: 2)); i += 1
+                case .transition:
+                    let tr = t.hasPrefix(">") ? String(t.dropFirst()).trimmingCharacters(in: .whitespaces) : t
+                    blocks.append(Block(kind: .transition, lines: [Line(runs: runs(tr.uppercased()), align: .right)], spaceBefore: 1)); i += 1
+                case .centered:
+                    let c = String(t.dropFirst().dropLast()).trimmingCharacters(in: .whitespaces)
+                    blocks.append(Block(kind: .centered, lines: [Line(runs: runs(c), align: .center)], spaceBefore: 1)); i += 1
+                case .character:
+                    var cue = t.hasPrefix("@") ? String(t.dropFirst()) : t
+                    if cue.hasSuffix("^") { cue = String(cue.dropLast()).trimmingCharacters(in: .whitespaces) } // ponytail: dual dialogue printed one after the other
+                    var ls = [Line(runs: runs(cue), indent: cueIndent)]
+                    i += 1
+                    while i < lines.count, kinds[i] == .dialogue || kinds[i] == .parenthetical {
+                        let d = lines[i].trimmingCharacters(in: .whitespaces)
+                        if kinds[i] == .parenthetical {
+                            ls += wrap(runs(d), width: parenWidth).map { Line(runs: $0, indent: parenIndent) }
+                        } else {
+                            ls += wrap(runs(d), width: dialogueWidth).map { Line(runs: $0, indent: dialogueIndent) }
+                        }
+                        i += 1
+                    }
+                    blocks.append(Block(kind: .dialogue, lines: ls, spaceBefore: 1, cue: cue))
+                case .action, .parenthetical, .dialogue:
+                    // Consecutive action lines form one paragraph; each source line keeps its own line break.
+                    var ls: [Line] = []
+                    while i < lines.count, kinds[i] == .action || ((kinds[i] == .parenthetical || kinds[i] == .dialogue) && ls.isEmpty) {
+                        var a = String(lines[i])
+                        if a.hasPrefix("!") { a.removeFirst() }
+                        ls += wrap(runs(a.trimmingCharacters(in: .whitespaces)), width: actionWidth).map { Line(runs: $0) }
+                        i += 1
+                    }
+                    blocks.append(Block(kind: .action, lines: ls, spaceBefore: 1))
+                }
+            }
+        }
+        return blocks
+    }
+
+    // MARK: Pagination
+
+    public static func paginate(_ scripts: [String], options: Options = Options()) -> [Page] {
+        let blocks = blocks(from: scripts, sceneNumbers: options.sceneNumbers)
+        let max = options.linesPerPage
+        var pages: [Page] = []
+        var page: Page = []
+        func newPage() { if !page.isEmpty { pages.append(page) }; page = [] }
+        func room() -> Int { max - page.count }
+
+        var queue = blocks[...]
+        while var block = queue.popFirst() {
+            if block.kind == .pageBreak { newPage(); continue }
+            let space = page.isEmpty ? 0 : block.spaceBefore
+            // A heading must not end a page: it needs the first two lines of what follows (or all of it).
+            var need = block.lines.count
+            if block.kind == .heading, let next = queue.first, next.kind != .pageBreak {
+                need += next.spaceBefore + min(next.lines.count, 2)
+            }
+            if space + need <= room() {
+                page += Array(repeating: nil, count: space) + block.lines.map { Optional($0) }
+                continue
+            }
+            let avail = room() - space
+            switch block.kind {
+            case .action where block.lines.count >= 4 && avail >= 2:
+                let k = min(avail, block.lines.count - 2)
+                page += Array(repeating: nil, count: space) + block.lines.prefix(k).map { Optional($0) }
+                newPage()
+                block.lines = Array(block.lines.dropFirst(k)); block.spaceBefore = 0
+                queue.insert(block, at: queue.startIndex)
+            case .dialogue where avail >= 3 && block.lines.count >= 3:
+                // Cue plus at least one line here, at least one line there, and room for (MORE).
+                var k = min(avail - 1, block.lines.count - 1)
+                while k > 1, block.lines[k - 1].indent == parenIndent { k -= 1 } // never break right after a parenthetical
+                // Prefer to break after a sentence ends, as long as at least two lines of speech stay on this page.
+                if let end = (3...Swift.max(3, k)).reversed().first(where: { j in
+                    j <= k && block.lines[j - 1].indent == dialogueIndent
+                        && [".", "?", "!", "…", "—", "-"].contains(where: block.lines[j - 1].text.trimmingCharacters(in: .whitespaces).hasSuffix)
+                }) { k = end } else if block.lines.count <= max { fallthrough } // no sentence end here: move the speech whole
+                if k < 2 { fallthrough }
+                page += Array(repeating: nil, count: space) + block.lines.prefix(k).map { Optional($0) }
+                page.append(Line(runs: [Run("(MORE)")], indent: cueIndent))
+                newPage()
+                let cue = block.cue ?? ""
+                let contd = cue.uppercased().contains("CONT'D") ? cue : cue + " (CONT'D)"
+                block.lines = [Line(runs: runs(contd), indent: cueIndent)] + block.lines.dropFirst(k)
+                block.spaceBefore = 0
+                queue.insert(block, at: queue.startIndex)
+            default:
+                newPage()
+                if block.lines.count > max { block.lines = Array(block.lines.prefix(max)) } // ponytail: a single block taller than a page is cut
+                queue.insert(block, at: queue.startIndex)
+            }
+        }
+        newPage()
+        return pages
+    }
+
+    // MARK: Title page
+
+    public struct TitlePage: Sendable {
+        public var centre: [Line] = []
+        public var bottomLeft: [Line] = []
+        public var isEmpty: Bool { centre.isEmpty && bottomLeft.isEmpty }
+    }
+
+    /// Fountain title page keys (`Title:`, `Credit:`, `Author:`, `Source:`, `Draft date:`, `Contact:`),
+    /// with indented lines continuing a value.
+    public static func titlePage(_ text: String) -> TitlePage {
+        var fields: [(String, [String])] = []
+        for raw in Fountain.lines(MarkdownFile(text: text).body) {
+            let line = String(raw)
+            if let colon = line.firstIndex(of: ":"), !line.hasPrefix(" "), !line.hasPrefix("\t") {
+                let key = line[..<colon].trimmingCharacters(in: .whitespaces).lowercased()
+                let value = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+                fields.append((key, value.isEmpty ? [] : [value]))
+            } else if !fields.isEmpty, !line.trimmingCharacters(in: .whitespaces).isEmpty {
+                fields[fields.count - 1].1.append(line.trimmingCharacters(in: .whitespaces))
+            }
+        }
+        func values(_ keys: String...) -> [String] { fields.filter { keys.contains($0.0) }.flatMap(\.1) }
+        var page = TitlePage()
+        let title = values("title")
+        if !title.isEmpty {
+            page.centre += title.map { Line(runs: runs($0.uppercased()).map { var r = $0; r.bold = true; r.underline = true; return r }, align: .center) }
+            page.centre.append(Line(runs: []))
+        }
+        for (i, group) in [values("credit"), values("author", "authors"), values("source")].enumerated() where !group.isEmpty {
+            if i > 0 { page.centre.append(Line(runs: [])) }
+            page.centre += group.map { Line(runs: runs($0), align: .center) }
+        }
+        page.bottomLeft = (values("draft date") + [""] + values("contact")).map { Line(runs: runs($0)) }
+        while page.bottomLeft.first?.text.isEmpty == true { page.bottomLeft.removeFirst() }
+        while page.bottomLeft.last?.text.isEmpty == true { page.bottomLeft.removeLast() }
+        if page.centre.last?.text.isEmpty == true { page.centre.removeLast() }
+        return page
+    }
+}

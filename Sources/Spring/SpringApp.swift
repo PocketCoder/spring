@@ -1,5 +1,6 @@
 import AppKit
 import Sparkle
+import SpringCore
 import SwiftUI
 
 @main
@@ -13,6 +14,19 @@ struct SpringApp: App {
     private var canUpdate: Bool { !(Bundle.main.object(forInfoDictionaryKey: "SUPublicEDKey") as? String ?? "").isEmpty }
 
     init() {
+        // `Spring --export-pdf <project> <out.pdf>`: renders without opening a window (used to check layout).
+        let args = CommandLine.arguments
+        if let i = args.firstIndex(of: "--export-pdf"), args.count > i + 2 {
+            for f in (try? FileManager.default.contentsOfDirectory(at: URL(filePath: "Resources/Fonts"), includingPropertiesForKeys: nil)) ?? [] {
+                CTFontManagerRegisterFontsForURL(f as CFURL, .process, nil)
+            }
+            let root = URL(filePath: args[i + 1], directoryHint: .isDirectory)
+            let scenes = (try? ProjectIO.loadScenes(in: root)) ?? []
+            let title = try? String(contentsOf: root.appending(path: "front-matter.md"), encoding: .utf8)
+            let data = PDFExport.render(scripts: scenes.map(\.file.body), titlePage: title, paper: .a4, sceneNumbers: args.contains("--scene-numbers"))
+            try? data.write(to: URL(filePath: args[i + 2]))
+            exit(0)
+        }
         // Needed when launched as a bare executable (`swift run`); harmless inside the .app bundle.
         NSApplication.shared.setActivationPolicy(.regular)
     }
@@ -52,6 +66,11 @@ struct SpringApp: App {
             }
             CommandGroup(replacing: .saveItem) {
                 Button("Save") { model.saveAll() }.keyboardShortcut("s")
+            }
+            CommandGroup(replacing: .importExport) {
+                Button("Export PDF…") { model.exportPDF() }.keyboardShortcut("e", modifiers: [.command, .shift])
+                    .disabled(model.projectURL == nil)
+                Button("Export Fountain…") { model.exportFountain() }.disabled(model.projectURL == nil)
             }
         }
         Settings { SettingsView() }

@@ -218,5 +218,61 @@ check(r.scenes.map(\.heading) == ["INT. A EDITED", "INT. C"], "new file added, d
 r = ProjectIO.sync(live, dirty: [live[1].id], conflicts: [], in: sp)
 check(r.scenes.contains { $0.id == live[1].id } && r.conflicts.contains(live[1].id), "deleted while dirty is kept as a conflict")
 
+// Screenplay layout (PDF export)
+typealias SP = Screenplay
+check(SP.runs("a **b** *c* ***d*** _e_ \\*f") == [SP.Run("a "), SP.Run("b", bold: true), SP.Run(" "), SP.Run("c", italic: true), SP.Run(" "),
+      SP.Run("d", bold: true, italic: true), SP.Run(" "), SP.Run("e", underline: true), SP.Run(" *f")], "emphasis: \(SP.runs("a **b** *c* ***d*** _e_ \\*f"))")
+let wrapped = SP.wrap(SP.runs("one two **three** four"), width: 9)
+check(wrapped.map { $0.map(\.text).joined() } == ["one two", "three", "four"] && wrapped[1] == [SP.Run("three", bold: true)], "wrap keeps styles")
+check(SP.wrap([SP.Run(String(repeating: "x", count: 25))], width: 10).count == 3, "long words broken")
+
+let scene = """
+INT. BAR - NIGHT #4#
+= A synopsis that never prints.
+[[A note that never prints.]]
+
+Billy wipes a glass. /* cut this */
+
+BILLY
+(quietly)
+We're shut.
+
+CUT TO:
+
+> THE END <
+"""
+let pages = SP.paginate([scene], options: SP.Options(sceneNumbers: true))
+let text = pages[0].map { $0?.text ?? "" }
+check(text == ["INT. BAR - NIGHT", "", "Billy wipes a glass.", "", "BILLY", "(quietly)", "We're shut.", "", "CUT TO:", "", "THE END"], "page text: \(text)")
+let lines = pages[0].compactMap { $0 }
+check(lines[0].sceneNumber == "4" && lines[0].runs[0].bold, "explicit scene number kept, heading bold")
+check(lines[2].indent == 22 && lines[3].indent == 16 && lines[4].indent == 10, "cue, parenthetical, dialogue indents")
+check(lines[5].align == .right && lines[6].align == .center, "transition right, centred text centred")
+
+// Dialogue across a page: (MORE) at the bottom, (CONT'D) at the top
+let filler = Array(repeating: "Action line.", count: 6).joined(separator: "\n\n")
+let speech = (1...8).map { "Line \($0) of the speech." }.joined(separator: "\n")
+let long = SP.paginate(["INT. A - DAY\n\n\(filler)\n\nSARAH\n\(speech)"], options: SP.Options(linesPerPage: 20))
+let p1 = long[0].map { $0?.text ?? "" }, p2 = long[1].map { $0?.text ?? "" }
+check(p1.count <= 20 && p1.last == "(MORE)" && p2.first == "SARAH (CONT'D)", "MORE / CONT'D: \(p1) | \(p2)")
+check((p1 + p2).filter { $0.hasPrefix("Line ") }.count == 8, "no dialogue lost across the break")
+let wordy = (1...6).map { "Sentence \($0) runs on and on across more than one line of dialogue here." }.joined(separator: " ")
+let broken = SP.paginate(["INT. A - DAY\n\n\(filler)\n\nSARAH\n\(wordy)"], options: SP.Options(linesPerPage: 20))
+for page in broken where page.last??.text == "(MORE)" {
+    let before = page.compactMap { $0 }.dropLast().last?.text ?? ""
+    check(before.hasSuffix("."), "speech breaks only after a sentence ends: \(before)")
+}
+check(broken.flatMap { $0 }.compactMap { $0?.text }.joined(separator: " ").contains("Sentence 6 runs"), "whole speech printed")
+
+// A heading never ends a page
+let crowd = Array(repeating: "Action.", count: 9).joined(separator: "\n\n")
+let kept = SP.paginate(["INT. A - DAY\n\n\(crowd)\n\nINT. B - DAY\n\nMore action."], options: SP.Options(linesPerPage: 20))
+check(kept[0].compactMap { $0 }.last?.text != "INT. B - DAY" && kept[1].first??.text == "INT. B - DAY", "heading moved to the next page")
+check(SP.paginate(["INT. A\n\nOne.\n\n===\n\nTwo."]).count == 2, "forced page break")
+
+let tp = SP.titlePage("Title: My Project\nCredit: Written by\nAuthor: Jo Bloggs\nDraft date: 21 November 2026\nContact:\n    jo@example.com\n    01234 567890")
+check(tp.centre.map(\.text) == ["MY PROJECT", "", "Written by", "", "Jo Bloggs"], "title page centre: \(tp.centre.map(\.text))")
+check(tp.bottomLeft.map(\.text) == ["21 November 2026", "", "jo@example.com", "01234 567890"], "title page contact: \(tp.bottomLeft.map(\.text))")
+
 try? FileManager.default.removeItem(at: dir)
 print("SpringChecks: all passed")
