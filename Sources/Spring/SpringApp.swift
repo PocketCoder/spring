@@ -23,8 +23,13 @@ struct SpringApp: App {
             let root = URL(filePath: args[i + 1], directoryHint: .isDirectory)
             let scenes = (try? ProjectIO.loadScenes(in: root)) ?? []
             let title = try? String(contentsOf: root.appending(path: "front-matter.md"), encoding: .utf8)
-            let data = PDFExport.render(scripts: scenes.map(\.file.body), titlePage: title, paper: .a4, sceneNumbers: args.contains("--scene-numbers"))
-            try? data.write(to: URL(filePath: args[i + 2]))
+            let out = URL(filePath: args[i + 2]), scripts = scenes.map(\.file.body)
+            let data: Data? = switch out.pathExtension {
+            case "docx": DOCXExport.document(scripts: scripts, titlePage: title, paper: .a4)
+            case "fdx": Data(FDX.document(scripts: scripts, titlePage: title).utf8)
+            default: PDFExport.render(scripts: scripts, titlePage: title, paper: .a4, sceneNumbers: args.contains("--scene-numbers"))
+            }
+            try? data?.write(to: out)
             exit(0)
         }
         // Needed when launched as a bare executable (`swift run`); harmless inside the .app bundle.
@@ -70,6 +75,8 @@ struct SpringApp: App {
             CommandGroup(replacing: .importExport) {
                 Button("Export PDF…") { model.exportPDF() }.keyboardShortcut("e", modifiers: [.command, .shift])
                     .disabled(model.projectURL == nil)
+                Button("Export Final Draft…") { model.export(as: "fdx") }.disabled(model.projectURL == nil)
+                Button("Export Word Document…") { model.export(as: "docx") }.disabled(model.projectURL == nil)
                 Button("Export Fountain…") { model.exportFountain() }.disabled(model.projectURL == nil)
             }
         }

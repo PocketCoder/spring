@@ -128,8 +128,22 @@ public enum Screenplay {
         return t
     }
 
-    static func blocks(from scripts: [String], sceneNumbers: Bool) -> [Block] {
-        var blocks: [Block] = []
+    // MARK: Elements (shared by PDF, DOCX and FDX export)
+
+    public enum ElementKind: Sendable { case heading, action, character, parenthetical, dialogue, transition, centered, pageBreak }
+
+    /// One printable paragraph. `text` keeps Fountain emphasis marks; action lines are joined with "\n".
+    public struct Element: Equatable, Sendable {
+        public var kind: ElementKind
+        public var text: String
+        /// Headings: "4", or as written ("#4A#" gives "4A").
+        public var sceneNumber: String?
+        /// Characters: this speech sits beside the one before it (`^`).
+        public var dual = false
+    }
+
+    public static func elements(_ scripts: [String]) -> [Element] {
+        var out: [Element] = []
         var sceneNumber = 0
         for script in scripts {
             let text = printable(script)
@@ -137,65 +151,91 @@ public enum Screenplay {
             let kinds = Fountain.classify(text)
             var i = 0
             while i < lines.count {
-                let raw = lines[i], kind = kinds[i]
-                let t = raw.trimmingCharacters(in: .whitespaces)
-                switch kind {
+                let t = lines[i].trimmingCharacters(in: .whitespaces)
+                switch kinds[i] {
                 case .blank, .section, .synopsis, .note:
-                    i += 1
+                    break
                 case .pageBreak:
-                    blocks.append(Block(kind: .pageBreak, lines: [], spaceBefore: 0)); i += 1
+                    out.append(Element(kind: .pageBreak, text: ""))
                 case .heading:
                     sceneNumber += 1
                     var heading = t.hasPrefix(".") ? String(t.dropFirst()) : t
                     var number = "\(sceneNumber)"
                     if let r = heading.range(of: #"\s*#[^#]*#\s*$"#, options: .regularExpression) {
-                        // An explicit number ("#4A#") wins and is printed as written.
                         number = heading[r].trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "#"))
                         heading.removeSubrange(r)
                     }
-                    var ls = wrap(runs(heading.uppercased()), width: actionWidth).map { Line(runs: $0.map { var r = $0; r.bold = true; return r }) }
-                    if sceneNumbers { ls[0].sceneNumber = number }
-                    blocks.append(Block(kind: .heading, lines: ls, spaceBefore: 2)); i += 1
+                    out.append(Element(kind: .heading, text: heading.uppercased(), sceneNumber: number))
                 case .transition:
-                    let tr = t.hasPrefix(">") ? String(t.dropFirst()).trimmingCharacters(in: .whitespaces) : t
-                    blocks.append(Block(kind: .transition, lines: [Line(runs: runs(tr.uppercased()), align: .right)], spaceBefore: 1)); i += 1
+                    out.append(Element(kind: .transition, text: (t.hasPrefix(">") ? String(t.dropFirst()).trimmingCharacters(in: .whitespaces) : t).uppercased()))
                 case .centered:
-                    let c = String(t.dropFirst().dropLast()).trimmingCharacters(in: .whitespaces)
-                    blocks.append(Block(kind: .centered, lines: [Line(runs: runs(c), align: .center)], spaceBefore: 1)); i += 1
+                    out.append(Element(kind: .centered, text: String(t.dropFirst().dropLast()).trimmingCharacters(in: .whitespaces)))
                 case .character:
                     var cue = t.hasPrefix("@") ? String(t.dropFirst()) : t
                     let dual = cue.hasSuffix("^")
                     if dual { cue = String(cue.dropLast()).trimmingCharacters(in: .whitespaces) }
-                    var ls = [Line(runs: runs(cue), indent: cueIndent)]
-                    var speech: [(paren: Bool, text: String)] = []
-                    i += 1
-                    while i < lines.count, kinds[i] == .dialogue || kinds[i] == .parenthetical {
-                        let d = lines[i].trimmingCharacters(in: .whitespaces)
-                        speech.append((kinds[i] == .parenthetical, d))
-                        if kinds[i] == .parenthetical {
-                            ls += wrap(runs(d), width: parenWidth).map { Line(runs: $0, indent: parenIndent) }
-                        } else {
-                            ls += wrap(runs(d), width: dialogueWidth).map { Line(runs: $0, indent: dialogueIndent) }
-                        }
-                        i += 1
-                    }
-                    if dual, let prev = blocks.last, prev.kind == .dialogue, let prevCue = prev.cue {
-                        blocks[blocks.count - 1] = Block(kind: .dual, lines: dualLines(left: (prevCue, prev.speech), right: (cue, speech)), spaceBefore: prev.spaceBefore)
-                    } else {
-                        blocks.append(Block(kind: .dialogue, lines: ls, spaceBefore: 1, cue: cue, speech: speech))
-                    }
-                case .action, .parenthetical, .dialogue:
+                    out.append(Element(kind: .character, text: cue, dual: dual))
+                case .parenthetical:
+                    out.append(Element(kind: .parenthetical, text: t)) // classify only gives these straight after a cue
+                case .dialogue:
+                    out.append(Element(kind: .dialogue, text: t))
+                case .action:
                     // Consecutive action lines form one paragraph; each source line keeps its own line break.
-                    var ls: [Line] = []
-                    while i < lines.count, kinds[i] == .action || ((kinds[i] == .parenthetical || kinds[i] == .dialogue) && ls.isEmpty) {
+                    var ls: [String] = []
+                    while i < lines.count, kinds[i] == .action {
                         var a = String(lines[i])
                         if a.hasPrefix("!") { a.removeFirst() }
-                        ls += wrap(runs(a.trimmingCharacters(in: .whitespaces)), width: actionWidth).map { Line(runs: $0) }
+                        ls.append(a.trimmingCharacters(in: .whitespaces))
                         i += 1
                     }
-                    blocks.append(Block(kind: .action, lines: ls, spaceBefore: 1))
+                    out.append(Element(kind: .action, text: ls.joined(separator: "\n")))
+                    continue
+                }
+                i += 1
+            }
+        }
+        return out
+    }
+
+    static func blocks(from scripts: [String], sceneNumbers: Bool) -> [Block] {
+        var blocks: [Block] = []
+        let els = elements(scripts)
+        var i = 0
+        while i < els.count {
+            let e = els[i]
+            switch e.kind {
+            case .pageBreak:
+                blocks.append(Block(kind: .pageBreak, lines: [], spaceBefore: 0))
+            case .heading:
+                var ls = wrap(runs(e.text), width: actionWidth).map { Line(runs: $0.map { var r = $0; r.bold = true; return r }) }
+                if sceneNumbers { ls[0].sceneNumber = e.sceneNumber }
+                blocks.append(Block(kind: .heading, lines: ls, spaceBefore: 2))
+            case .transition:
+                blocks.append(Block(kind: .transition, lines: [Line(runs: runs(e.text), align: .right)], spaceBefore: 1))
+            case .centered:
+                blocks.append(Block(kind: .centered, lines: [Line(runs: runs(e.text), align: .center)], spaceBefore: 1))
+            case .action, .parenthetical, .dialogue:
+                let ls = e.text.split(separator: "\n", omittingEmptySubsequences: false)
+                    .flatMap { wrap(runs(String($0)), width: actionWidth).map { Line(runs: $0) } }
+                blocks.append(Block(kind: .action, lines: ls, spaceBefore: 1))
+            case .character:
+                var ls = [Line(runs: runs(e.text), indent: cueIndent)]
+                var speech: [(paren: Bool, text: String)] = []
+                while i + 1 < els.count, els[i + 1].kind == .dialogue || els[i + 1].kind == .parenthetical {
+                    i += 1
+                    let d = els[i]
+                    speech.append((d.kind == .parenthetical, d.text))
+                    ls += d.kind == .parenthetical
+                        ? wrap(runs(d.text), width: parenWidth).map { Line(runs: $0, indent: parenIndent) }
+                        : wrap(runs(d.text), width: dialogueWidth).map { Line(runs: $0, indent: dialogueIndent) }
+                }
+                if e.dual, let prev = blocks.last, prev.kind == .dialogue, let prevCue = prev.cue {
+                    blocks[blocks.count - 1] = Block(kind: .dual, lines: dualLines(left: (prevCue, prev.speech), right: (e.text, speech)), spaceBefore: prev.spaceBefore)
+                } else {
+                    blocks.append(Block(kind: .dialogue, lines: ls, spaceBefore: 1, cue: e.text, speech: speech))
                 }
             }
+            i += 1
         }
         return blocks
     }

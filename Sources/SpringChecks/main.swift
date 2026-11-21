@@ -304,5 +304,14 @@ let duetText = "INT. A\n\nBRICK\nScrew it.\n\nSTEEL ^\n(laughing)\nScrew it.\n\n
 let pairs = Fountain.dualPairs(duetText)
 check(pairs.count == 1 && pairs[0].left == 2..<5 && pairs[0].right == 5..<8, "dual pair line ranges: \(pairs)")
 
+// Final Draft export
+let fdx = FDX.document(scripts: ["INT. BAR - NIGHT #4A#\n\nBilly & **Sarah** wait.\n\nBILLY\n(quietly)\nShut.\n\nSARAH ^\nNo.\n\n===\n\nCUT TO:"], titlePage: "Title: Bar <One>")
+check(fdx.contains("<Paragraph Type=\"Scene Heading\" Number=\"4A\"><Text>INT. BAR - NIGHT</Text></Paragraph>"), "fdx heading")
+check(fdx.contains("<Text>Billy &amp; </Text><Text Style=\"Bold\">Sarah</Text><Text> wait.</Text>"), "fdx escaping and styles")
+check(fdx.contains("<DualDialogue>") && fdx.contains("<Paragraph Type=\"Parenthetical\"><Text>(quietly)</Text></Paragraph>"), "fdx dual dialogue")
+check(fdx.contains("<Paragraph Type=\"Transition\" StartsNewPage=\"Yes\"><Text>CUT TO:</Text></Paragraph>"), "fdx page break")
+check(fdx.contains("<Text>BAR &lt;ONE&gt;</Text>"), "fdx title page")
+check((try? XMLDocument(xmlString: fdx)) != nil, "fdx is well-formed XML")
+
 try? FileManager.default.removeItem(at: dir)
 print("SpringChecks: all passed")

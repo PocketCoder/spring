@@ -163,3 +163,83 @@ extension ProjectModel {
         }
     }
 }
+
+/// Word (.docx) export: one styled paragraph per element with screenplay indents and page margins, so Word reflows it.
+enum DOCXExport {
+    static func document(scripts: [String], titlePage: String?, paper: PDFExport.Paper) -> Data? {
+        let cw: CGFloat = 7.2 // Courier 12 pt advance
+        let out = NSMutableAttributedString()
+        func para(_ text: String, head: CGFloat = 0, tail: CGFloat = 0, align: NSTextAlignment = .left, before: CGFloat = 12,
+                  bold: Bool = false, pageBreakBefore: Bool = false) {
+            let p = NSMutableParagraphStyle()
+            p.firstLineHeadIndent = head * cw
+            p.headIndent = head * cw
+            if tail > 0 { p.tailIndent = -(60 - tail) * cw } // negative: measured from the right margin, which Word keeps
+            p.alignment = align
+            p.paragraphSpacingBefore = before
+            if pageBreakBefore, out.length > 0 { out.append(NSAttributedString(string: "\u{0C}")) }
+            let line = NSMutableAttributedString()
+            for r in Screenplay.runs(text) {
+                var attrs: [NSAttributedString.Key: Any] = [.font: PDFExport.font(bold: r.bold || bold, italic: r.italic), .paragraphStyle: p]
+                if r.underline { attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue }
+                line.append(NSAttributedString(string: r.text.replacingOccurrences(of: "\n", with: "\u{2028}"), attributes: attrs))
+            }
+            if line.length == 0 { line.append(NSAttributedString(string: "", attributes: [.font: PDFExport.font(bold: false, italic: false), .paragraphStyle: p])) }
+            line.append(NSAttributedString(string: "\n", attributes: [.font: PDFExport.font(bold: false, italic: false), .paragraphStyle: p]))
+            out.append(line)
+        }
+        if let titlePage {
+            let tp = Screenplay.titlePage(titlePage)
+            if !tp.isEmpty {
+                for (n, l) in tp.centre.enumerated() { para(l.text, align: .center, before: n == 0 ? 216 : 0, bold: n == 0) }
+                for (n, l) in tp.bottomLeft.enumerated() { para(l.text, before: n == 0 ? 216 : 0) }
+            }
+        }
+        var breakNext = out.length > 0
+        for e in Screenplay.elements(scripts) {
+            let pb = breakNext
+            switch e.kind {
+            case .pageBreak: breakNext = true; continue
+            case .heading: para(e.text, before: 24, bold: true, pageBreakBefore: pb)
+            case .action: para(e.text, pageBreakBefore: pb)
+            case .character: para(e.text, head: 22, pageBreakBefore: pb)
+            case .parenthetical: para(e.text, head: 16, tail: 41, before: 0, pageBreakBefore: pb)
+            case .dialogue: para(e.text, head: 10, tail: 45, before: 0, pageBreakBefore: pb)
+            case .transition: para(e.text, align: .right, pageBreakBefore: pb)
+            case .centered: para(e.text, align: .center, pageBreakBefore: pb)
+            }
+            breakNext = false
+        }
+        let attrs: [NSAttributedString.DocumentAttributeKey: Any] = [
+            .documentType: NSAttributedString.DocumentType.officeOpenXML,
+            .paperSize: paper.size, .leftMargin: 108.0, .rightMargin: 72.0, .topMargin: 72.0, .bottomMargin: 72.0,
+        ]
+        return try? out.data(from: NSRange(location: 0, length: out.length), documentAttributes: attrs)
+    }
+}
+
+extension ProjectModel {
+    /// Word or Final Draft export of the whole script.
+    func export(as ext: String) {
+        guard let root = projectURL else { return }
+        saveAll()
+        let panel = NSSavePanel()
+        panel.title = ext == "fdx" ? "Export Final Draft" : "Export Word Document"
+        panel.nameFieldStringValue = root.lastPathComponent + "." + ext
+        let exports = root.appending(path: "Exports")
+        try? FileManager.default.createDirectory(at: exports, withIntermediateDirectories: true)
+        panel.directoryURL = exports
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let title = try? String(contentsOf: root.appending(path: "front-matter.md"), encoding: .utf8)
+        let scripts = scenes.map(\.file.body)
+        let paper = PDFExport.Paper(rawValue: UserDefaults.standard.string(forKey: "pdfPaper") ?? "") ?? .a4
+        let data = ext == "fdx" ? Data(FDX.document(scripts: scripts, titlePage: title).utf8)
+                                : DOCXExport.document(scripts: scripts, titlePage: title, paper: paper)
+        do {
+            guard let data else { throw CocoaError(.fileWriteUnknown) }
+            try data.write(to: url, options: .atomic)
+        } catch {
+            errorMessage = "Couldn't export: \(error.localizedDescription)"
+        }
+    }
+}
