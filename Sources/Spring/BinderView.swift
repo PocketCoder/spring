@@ -85,6 +85,7 @@ struct BinderView: View {
             }
         }
         Button("Show in Finder") { reveal(node.url) }
+        if !node.isFolder { Button("Open in Obsidian") { model.openInObsidian(node.url) } }
         if !node.isFolder, node.url.deletingLastPathComponent().lastPathComponent != "Graveyard" {
             Divider()
             Button("Send to Graveyard") { model.buryFile(node.url) }

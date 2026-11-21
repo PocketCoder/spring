@@ -623,7 +623,28 @@ final class ProjectModel {
 
     // MARK: Find and replace
 
-    var showFind = false
+    enum Panel { case find, scene }
+    /// The right-hand panel: Find, or the scene inspector.
+    var panel: Panel?
+    var showFind: Bool {
+        get { panel == .find }
+        set { panel = newValue ? .find : (panel == .find ? nil : panel) }
+    }
+
+    /// Characters and locations a scene mentions, with their notes when they exist.
+    func people(in id: UUID) -> [(name: String, note: URL?)] {
+        guard let root = projectURL, let s = scenes.first(where: { $0.id == id }) else { return [] }
+        let files = (try? FileManager.default.contentsOfDirectory(at: root.appending(path: "Characters"), includingPropertiesForKeys: nil)) ?? []
+        let names = Autocomplete.characters(fileStems: [], sceneBodies: [s.file.body])
+        return names.map { n in (n, files.first { Autocomplete.characterName(fromFileStem: ProjectIO.stem(of: $0)) == n }) }
+    }
+
+    func places(in id: UUID) -> [(name: String, note: URL?)] {
+        guard let root = projectURL, let s = scenes.first(where: { $0.id == id }) else { return [] }
+        let files = (try? FileManager.default.contentsOfDirectory(at: root.appending(path: "Locations"), includingPropertiesForKeys: nil)) ?? []
+        let locs = Autocomplete.locations(fileStems: [], sceneBodies: [s.file.body])
+        return locs.map { l in (l, files.first { l.hasPrefix(ProjectIO.stem(of: $0).uppercased()) }) }
+    }
     var findQuery = ""
     var replaceText = ""
     var findCaseSensitive = false
@@ -755,4 +776,44 @@ final class ProjectModel {
 
     var showReport = false
     @ObservationIgnored var sessionStartWords: Int?
+
+    // MARK: Focus mode, title page, Obsidian, copying
+
+    /// Just the page: no toolbar, scene list, status line, binder or panel.
+    var focusMode = false {
+        didSet { if focusMode { binder = .detailOnly; panel = nil } }
+    }
+
+    var showTitlePage = false
+    var titleFields: [String: String] = [:]
+
+    func editTitlePage() {
+        guard let root = projectURL else { return }
+        titleFields = TitlePageFile.fields((try? String(contentsOf: root.appending(path: "front-matter.md"), encoding: .utf8)) ?? "")
+        showTitlePage = true
+    }
+
+    func saveTitlePage() {
+        guard let root = projectURL else { return }
+        let url = root.appending(path: "front-matter.md")
+        let original = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        do { try TitlePageFile.text(titleFields.filter { !$0.value.isEmpty }, updating: original).write(to: url, atomically: true, encoding: .utf8) }
+        catch { errorMessage = "Couldn't save the title page: \(error.localizedDescription)" }
+        showTitlePage = false
+    }
+
+    /// Opens a file in Obsidian (obsidian://open?path=…). Needs the file to be inside an Obsidian vault.
+    func openInObsidian(_ url: URL) {
+        var c = URLComponents(string: "obsidian://open")!
+        c.queryItems = [URLQueryItem(name: "path", value: url.path)]
+        if let link = c.url, !NSWorkspace.shared.open(link) { errorMessage = "Couldn't open Obsidian. Is it installed?" }
+    }
+
+    /// The whole script as one Fountain text on the clipboard (scenes are separate files, so it can't be selected in one go).
+    func copyWholeScript() {
+        let text = scenes.map { $0.file.body.trimmingCharacters(in: .newlines) }.joined(separator: "\n\n")
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        showToast("Copied the whole script (\(scenes.count) scenes)")
+    }
 }

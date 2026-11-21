@@ -369,3 +369,38 @@ public enum Screenplay {
         return page
     }
 }
+
+/// The title page file (front-matter.md) as editable fields; keys Spring doesn't show are kept.
+public enum TitlePageFile {
+    public static let keys = ["Title", "Credit", "Author", "Source", "Draft date", "Contact"]
+
+    /// Key → value, multi-line values joined with "\n".
+    public static func fields(_ text: String) -> [String: String] {
+        var out: [String: String] = [:]
+        var last: String?
+        for raw in Fountain.lines(MarkdownFile(text: text).body) {
+            let line = String(raw)
+            if let colon = line.firstIndex(of: ":"), !line.hasPrefix(" "), !line.hasPrefix("\t") {
+                let key = String(line[..<colon]).trimmingCharacters(in: .whitespaces)
+                out[key] = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+                last = key
+            } else if let k = last, !line.trimmingCharacters(in: .whitespaces).isEmpty {
+                let v = out[k] ?? ""
+                out[k] = (v.isEmpty ? "" : v + "\n") + line.trimmingCharacters(in: .whitespaces)
+            }
+        }
+        return out
+    }
+
+    /// Writes fields back in the usual order (others after), keeping any frontmatter.
+    public static func text(_ fields: [String: String], updating original: String) -> String {
+        var file = MarkdownFile(text: original)
+        let order = keys.filter { fields[$0] != nil } + fields.keys.filter { !keys.contains($0) }.sorted()
+        file.body = order.compactMap { k -> String? in
+            let lines = (fields[k] ?? "").components(separatedBy: "\n")
+            if lines.count > 1 { return "\(k):\n" + lines.map { "    " + $0 }.joined(separator: "\n") }
+            return "\(k): \(lines[0])"
+        }.joined(separator: "\n") + "\n"
+        return file.text
+    }
+}

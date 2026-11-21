@@ -389,5 +389,14 @@ check(report.scenes == 2 && report.interior == 1 && report.exterior == 1 && repo
 check(report.speakers.first?.name == "BILLY" && report.speakers.first?.speeches == 3 && report.speakers.first?.words == 6 && report.speakers.first?.scenes == 2, "report speakers")
 check(report.places.first?.name == "BAR" && report.places.first?.scenes == 2, "report places")
 
+// Title page form round trip
+let tpText = "---\ntags: [x]\n---\nTitle: Bar\nCredit: Written by\nNotes: keep me\nContact:\n    jo@example.com\n    0123\n"
+var tpf = TitlePageFile.fields(tpText)
+check(tpf["Title"] == "Bar" && tpf["Contact"] == "jo@example.com\n0123" && tpf["Notes"] == "keep me", "title page fields: \(tpf)")
+tpf["Author"] = "Jo Bloggs"
+let tpOut = TitlePageFile.text(tpf, updating: tpText)
+check(tpOut == "---\ntags: [x]\n---\nTitle: Bar\nCredit: Written by\nAuthor: Jo Bloggs\nContact:\n    jo@example.com\n    0123\nNotes: keep me\n", "title page written: \(tpOut)")
+check(SP.titlePage(tpOut).centre.map(\.text).contains("Jo Bloggs"), "PDF title page reads the form's output")
+
 try? FileManager.default.removeItem(at: dir)
 print("SpringChecks: all passed")

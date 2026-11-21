@@ -61,6 +61,8 @@ struct SpringApp: App {
             CommandGroup(after: .textEditing) {
                 Button("Find in Script…") { model.showFind = true }.keyboardShortcut("f", modifiers: [.command, .shift])
                     .disabled(model.projectURL == nil)
+                Button("Scene Inspector") { model.panel = model.panel == .scene ? nil : .scene }.keyboardShortcut("i", modifiers: [.command, .option])
+                    .disabled(model.projectURL == nil)
             }
             CommandMenu("Scene") {
                 Button("New Scene") { model.newScene() }.keyboardShortcut("n").disabled(model.projectURL == nil)
@@ -78,7 +80,10 @@ struct SpringApp: App {
                     .keyboardShortcut("5", modifiers: [.command, .shift])
                 Divider()
                 Button("Send Scene to Graveyard") { if let id = model.currentScene { model.buryScene(id) } }
+                Button("Open in Obsidian") { if let id = model.currentScene, let s = model.scenes.first(where: { $0.id == id }) { model.openInObsidian(s.url) } }
+                    .keyboardShortcut("o", modifiers: [.command, .option])
                 Divider()
+                Button("Title Page…") { model.editTitlePage() }
                 Button("Script Report") { model.showReport = true }.keyboardShortcut("r", modifiers: [.command, .option])
             }
             CommandGroup(replacing: .printItem) {
@@ -86,6 +91,8 @@ struct SpringApp: App {
             }
             CommandGroup(after: .pasteboard) {
                 Divider()
+                Button("Copy Whole Script") { model.copyWholeScript() }.keyboardShortcut("c", modifiers: [.command, .option])
+                    .disabled(model.projectURL == nil)
                 Button("Send to Graveyard") { NSApp.sendAction(#selector(SceneTextView.sendToGraveyard(_:)), to: nil, from: nil) }
                     .keyboardShortcut("g", modifiers: [.command, .shift])
             }
@@ -96,6 +103,8 @@ struct SpringApp: App {
                     .keyboardShortcut("3")
                 Button("Previous Scene") { step(-1) }.keyboardShortcut("[")
                 Button("Next Scene") { step(1) }.keyboardShortcut("]")
+                Button(model.focusMode ? "Leave Focus Mode" : "Focus Mode") { model.focusMode.toggle() }
+                    .keyboardShortcut("\\", modifiers: [.command, .shift])
                 Button("Binder") { model.binder = model.binder == .detailOnly ? .all : .detailOnly }
                     .keyboardShortcut("b", modifiers: [.command, .control])
                 Divider()

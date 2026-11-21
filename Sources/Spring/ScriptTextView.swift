@@ -99,7 +99,46 @@ enum ScriptStyler {
             }
             loc += len + 1
         }
+        inline(storage, text)
         storage.endEditing()
+    }
+}
+
+extension ScriptStyler {
+    static let patterns: [(NSRegularExpression, NSFontTraitMask?, Bool)] = [
+        (#"\*\*\*(?=\S)(.+?)(?<=\S)\*\*\*"#, [.boldFontMask, .italicFontMask], false),
+        (#"(?<![*\\])\*\*(?=\S)(.+?)(?<=\S)\*\*(?!\*)"#, .boldFontMask, false),
+        (#"(?<![*\\])\*(?=[^\s*])(.+?)(?<=[^\s*])\*(?!\*)"#, .italicFontMask, false),
+        (#"(?<!\\)_(?=\S)(.+?)(?<=\S)_"#, nil, true),
+    ].compactMap { pattern, trait, underline in (try? NSRegularExpression(pattern: pattern)).map { ($0, trait, underline) } }
+    static let notes = try? NSRegularExpression(pattern: #"\[\[[\s\S]*?\]\]"#)
+    static let boneyard = try? NSRegularExpression(pattern: #"/\*[\s\S]*?\*/"#)
+
+    /// Fountain emphasis shown as bold / italic / underline with the marks faded; [[notes]] and /* boneyard */ faded.
+    static func inline(_ storage: NSTextStorage, _ text: String) {
+        let all = NSRange(location: 0, length: (text as NSString).length)
+        for (re, trait, underline) in patterns {
+            for m in re.matches(in: text, range: all) {
+                let inner = m.range(at: 1)
+                if let trait {
+                    storage.enumerateAttribute(.font, in: inner) { value, r, _ in
+                        if let f = value as? NSFont { storage.addAttribute(.font, value: NSFontManager.shared.convert(f, toHaveTrait: trait), range: r) }
+                    }
+                }
+                if underline { storage.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: inner) }
+                // The asterisks / underscores themselves fade back.
+                let left = NSRange(location: m.range.location, length: inner.location - m.range.location)
+                let right = NSRange(location: inner.location + inner.length, length: m.range.location + m.range.length - inner.location - inner.length)
+                for r in [left, right] where r.length > 0 { storage.addAttribute(.foregroundColor, value: NSColor.tertiaryLabelColor, range: r) }
+            }
+        }
+        for m in notes?.matches(in: text, range: all) ?? [] {
+            storage.addAttribute(.foregroundColor, value: NSColor.secondaryLabelColor, range: m.range)
+        }
+        for m in boneyard?.matches(in: text, range: all) ?? [] {
+            storage.addAttribute(.foregroundColor, value: NSColor.tertiaryLabelColor, range: m.range)
+            storage.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: m.range)
+        }
     }
 }
 

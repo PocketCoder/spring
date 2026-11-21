@@ -22,11 +22,14 @@ struct ContentView: View {
                     case .script: editor
                     }
                 }
-                .toolbar { toolbar }
+                .toolbar { if !model.focusMode { toolbar } }
+                .toolbar(model.focusMode ? .hidden : .automatic, for: .windowToolbar)
+                .sheet(isPresented: Binding(get: { model.showTitlePage }, set: { model.showTitlePage = $0 })) { TitlePageSheet() }
                 .sheet(isPresented: Binding(get: { model.showSnapshots }, set: { model.showSnapshots = $0 })) { SnapshotsSheet() }
                 .sheet(isPresented: Binding(get: { model.showReport }, set: { model.showReport = $0 })) { ReportSheet() }
-                .inspector(isPresented: Binding(get: { model.showFind }, set: { model.showFind = $0 })) {
-                    FindPanel().inspectorColumnWidth(min: 260, ideal: 300, max: 420)
+                .inspector(isPresented: Binding(get: { model.panel != nil }, set: { if !$0 { model.panel = nil } })) {
+                    Group { if model.panel == .find { FindPanel() } else { ScenePanel() } }
+                        .inspectorColumnWidth(min: 260, ideal: 300, max: 420)
                 }
             }
         }
@@ -64,6 +67,8 @@ struct ContentView: View {
                 Label(model.continuous ? "Single Scene" : "Continuous Script", systemImage: model.continuous ? "rectangle.stack" : "rectangle")
             }
             .help(model.continuous ? "Showing the whole script. Click for one scene at a time (⌘3)" : "Showing one scene. Click for the whole script (⌘3)")
+            Button { model.panel = model.panel == .scene ? nil : .scene } label: { Label("Inspector", systemImage: "info.circle") }
+                .help("Scene inspector (⌥⌘I)")
             Menu {
                 Button("PDF…") { model.exportPDF() }
                 Button("Final Draft…") { model.export(as: "fdx") }
@@ -88,7 +93,7 @@ struct ContentView: View {
     private var editor: some View {
         ScrollViewReader { proxy in
             HStack(alignment: .top, spacing: 0) {
-                if model.binder == .detailOnly { SceneList(proxy: proxy) }
+                if model.binder == .detailOnly && !model.focusMode { SceneList(proxy: proxy) }
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         ForEach(Array(model.scenes.enumerated()).filter { model.continuous || $0.element.id == model.currentScene }, id: \.element.id) { i, scene in
@@ -123,7 +128,7 @@ struct ContentView: View {
                     .frame(maxWidth: .infinity)
                 }
             }
-            .overlay(alignment: .bottomTrailing) { StatusLine().padding(.trailing, 20).padding(.bottom, 14) }
+            .overlay(alignment: .bottomTrailing) { if !model.focusMode { StatusLine().padding(.trailing, 20).padding(.bottom, 14) } }
             .overlay(alignment: .bottom) { ToastView().padding(.bottom, 20) }
             .onAppear { scroll(proxy) }
             .onChange(of: model.scrollTarget) { scroll(proxy) }
@@ -164,6 +169,7 @@ struct SceneList: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .help(scene.cardText)
                 }
             }
             .padding(.top, 40)
@@ -552,5 +558,108 @@ struct ReportSheet: View {
             Text(value).font(.system(size: 20, weight: .semibold)).monospacedDigit()
             Text(label).font(.system(size: 11)).foregroundStyle(.secondary)
         }
+    }
+}
+
+/// The scene the cursor is in: synopsis, label, who's in it and where, snapshots.
+struct ScenePanel: View {
+    @Environment(ProjectModel.self) private var model
+    var body: some View {
+        if let id = model.currentScene, let i = model.scenes.firstIndex(where: { $0.id == id }) {
+            let scene = model.scenes[i]
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("SCENE \(i + 1)").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                        Text(scene.heading).font(.custom("Courier Prime", size: 14).bold())
+                        Text(scene.url.lastPathComponent).font(.system(size: 11)).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
+                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Synopsis").font(.system(size: 12, weight: .semibold))
+                        TextEditor(text: Binding(get: { scene.explicitSynopsis }, set: { model.updateSynopsis(id, $0) }))
+                            .font(.system(size: 13)).frame(height: 80)
+                            .scrollContentBackground(.hidden).padding(6)
+                            .background(Color(nsColor: Theme.paper), in: RoundedRectangle(cornerRadius: 7))
+                            .accessibilityLabel("Synopsis")
+                    }
+                    if scene.canLabel {
+                        HStack(spacing: 8) {
+                            Text("Label").font(.system(size: 12, weight: .semibold))
+                            Spacer()
+                            ForEach(SceneFile.labels, id: \.self) { name in
+                                Button { model.setLabel(id, scene.colorLabel == name ? nil : name) } label: {
+                                    Circle().fill(labelColor(name)).frame(width: 14, height: 14)
+                                        .overlay(Circle().strokeBorder(.primary.opacity(scene.colorLabel == name ? 0.8 : 0), lineWidth: 2))
+                                }
+                                .buttonStyle(.plain).help(name.capitalized).accessibilityLabel(name.capitalized)
+                            }
+                        }
+                    }
+                    links("Characters", model.people(in: id))
+                    links("Locations", model.places(in: id))
+                    HStack {
+                        Text("Snapshots").font(.system(size: 12, weight: .semibold))
+                        Spacer()
+                        Text("\(model.snapshots(id).count)").foregroundStyle(.secondary).monospacedDigit()
+                        Button("Take") { model.takeSnapshot(id) }
+                        Button("Browse…") { model.snapshotSelection = nil; model.showSnapshots = true }
+                    }
+                    .font(.system(size: 12))
+                }
+                .padding(16)
+            }
+            .background(Color(nsColor: Theme.paper2))
+        } else {
+            Text("No scene").foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    @ViewBuilder private func links(_ title: String, _ items: [(name: String, note: URL?)]) -> some View {
+        if !items.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.system(size: 12, weight: .semibold))
+                ForEach(items, id: \.name) { item in
+                    if let note = item.note {
+                        Button(item.name) { model.openFile(note) }.buttonStyle(.link).font(.system(size: 12))
+                    } else {
+                        Text(item.name).font(.system(size: 12)).foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Title page fields (front-matter.md), as Fountain title page keys.
+struct TitlePageSheet: View {
+    @Environment(ProjectModel.self) private var model
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Title Page").font(.headline)
+            Form {
+                ForEach(TitlePageFile.keys, id: \.self) { key in
+                    if key == "Contact" {
+                        LabeledContent("Contact:") {
+                            TextEditor(text: field(key)).font(.system(size: 13)).frame(height: 64)
+                        }
+                    } else {
+                        TextField("\(key):", text: field(key))
+                    }
+                }
+            }
+            Text("Saved to front-matter.md and printed as the first page of PDF, Word and Final Draft exports.")
+                .font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Spacer()
+                Button("Cancel") { model.showTitlePage = false }.keyboardShortcut(.cancelAction)
+                Button("Save") { model.saveTitlePage() }.keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 480)
+    }
+
+    private func field(_ key: String) -> Binding<String> {
+        Binding(get: { model.titleFields[key] ?? "" }, set: { model.titleFields[key] = $0 })
     }
 }
