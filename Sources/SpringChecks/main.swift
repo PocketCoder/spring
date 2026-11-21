@@ -174,5 +174,22 @@ let again = try JSONSerialization.jsonObject(with: ob.data) as! [String: Any]
 check(again["extra"] as? Int == 1 && ((again["nodes"] as! [[String: Any]])[0]["custom"] as? Bool) == true, "unknown keys kept")
 check((again["edges"] as! [Any]).isEmpty, "edges to removed card dropped")
 
+// Autocomplete
+check(Autocomplete.characterName(fromFileStem: "BILLY (M24) - Shopkeeper") == "BILLY", "name from file")
+check(Autocomplete.characterName(fromFileStem: "Mrs Hale - Landlady") == "MRS HALE", "name without age")
+let names = Autocomplete.characters(fileStems: ["BILLY (M24) - Shopkeeper", "SARAH (F55) - Mum"], sceneBodies: ["INT. BAR\n\nBARMAN (V.O.)\nLast orders.\n\nSARAH\nNo."])
+check(names == ["BARMAN", "BILLY", "SARAH"], "cues from files and scenes: \(names)")
+let places = Autocomplete.locations(fileStems: ["Bar", "House"], sceneBodies: ["INT. HOUSE - KITCHEN - DAY\n\nEXT. BUS STOP - NIGHT"])
+check(places == ["BAR", "BUS STOP", "HOUSE", "HOUSE - KITCHEN"], "locations: \(places)")
+check(Autocomplete.suggestions(for: "B", afterBlank: true, characters: names, locations: places) == ["BARMAN", "BILLY"], "cue suggestions")
+check(Autocomplete.suggestions(for: "B", afterBlank: false, characters: names, locations: places).isEmpty, "no cue mid-action")
+check(Autocomplete.suggestions(for: "Billy", afterBlank: true, characters: names, locations: places).isEmpty, "mixed case is action")
+check(Autocomplete.suggestions(for: "IN", afterBlank: true, characters: ["INGRID"], locations: places).isEmpty, "INT. beats a cue")
+check(Autocomplete.suggestions(for: "INT. HO", afterBlank: true, characters: names, locations: places) == ["INT. HOUSE", "INT. HOUSE - KITCHEN"], "heading locations")
+check(Autocomplete.suggestions(for: "ext. b", afterBlank: true, characters: names, locations: places) == ["ext. BAR", "ext. BUS STOP"], "keeps typed prefix")
+check(Autocomplete.suggestions(for: "INT. BAR - N", afterBlank: true, characters: names, locations: places) == ["INT. BAR - NIGHT"], "time of day")
+check(Autocomplete.suggestions(for: "INT. HOUSE - K", afterBlank: true, characters: names, locations: places) == ["INT. HOUSE - KITCHEN"], "sub-location after a dash")
+check(Autocomplete.suggestions(for: "SARAH (", afterBlank: true, characters: names, locations: places) == ["SARAH (V.O.)", "SARAH (O.S.)", "SARAH (CONT'D)"], "extensions")
+
 try? FileManager.default.removeItem(at: dir)
 print("SpringChecks: all passed")

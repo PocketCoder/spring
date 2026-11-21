@@ -401,4 +401,21 @@ final class ProjectModel {
     func scene(forCardFile file: String) -> SceneFile? {
         scenes.first { vaultRelativePath($0.url) == file || $0.url.path.hasSuffix("/" + file) }
     }
+
+    // MARK: Autocomplete
+
+    private func stems(in folder: String) -> [String] {
+        guard let root = projectURL,
+              let items = try? FileManager.default.contentsOfDirectory(at: root.appending(path: folder), includingPropertiesForKeys: nil, options: .skipsHiddenFiles)
+        else { return [] }
+        return items.filter { $0.pathExtension.lowercased() == "md" }.map(ProjectIO.stem(of:))
+    }
+
+    func suggestions(for line: String, afterBlank: Bool) -> [String] {
+        let bodies = scenes.map(\.file.body)
+        return Autocomplete.suggestions(
+            for: line, afterBlank: afterBlank,
+            characters: Autocomplete.characters(fileStems: stems(in: "Characters"), sceneBodies: bodies),
+            locations: Autocomplete.locations(fileStems: stems(in: "Locations"), sceneBodies: bodies))
+    }
 }

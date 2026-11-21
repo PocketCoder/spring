@@ -1,0 +1,1 @@
+Terraced, one window boarded.

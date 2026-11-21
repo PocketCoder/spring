@@ -57,7 +57,8 @@ struct ContentView: View {
                                 fontName: fontName,
                                 fontSize: fontSize,
                                 onEndEditing: { model.finishEditing(scene.id) },
-                                onBury: { model.bury($0, from: scene.id) }
+                                onBury: { model.bury($0, from: scene.id) },
+                                suggest: { model.suggestions(for: $0, afterBlank: $1) }
                             )
                             .id(scene.id)
                         }

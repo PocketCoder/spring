@@ -62,6 +62,8 @@ struct ScriptTextView: NSViewRepresentable {
     var fontSize: CGFloat
     var onEndEditing: () -> Void = {}
     var onBury: (String) -> Void = { _ in }
+    /// Whole-line suggestions for (text before the cursor on this line, previous line is blank).
+    var suggest: (String, Bool) -> [String] = { _, _ in [] }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -109,10 +111,46 @@ struct ScriptTextView: NSViewRepresentable {
         var parent: ScriptTextView
         init(_ parent: ScriptTextView) { self.parent = parent }
 
+        private var completing = false
+        private var typedCharacter = false
+
         func textDidChange(_ notification: Notification) {
             guard let tv = notification.object as? NSTextView else { return }
             restyle(tv)
             parent.text = tv.string
+            // Offer cue and heading completions while typing (not when deleting or after a completion).
+            if typedCharacter, !completing, !suggestions(tv).isEmpty {
+                completing = true
+                tv.complete(nil)
+                completing = false
+            }
+            typedCharacter = false
+        }
+
+        func textView(_ tv: NSTextView, shouldChangeTextIn range: NSRange, replacementString: String?) -> Bool {
+            typedCharacter = !completing && (replacementString.map { $0.count == 1 && $0 != "\n" } ?? false)
+            return true
+        }
+
+        func textView(_ tv: NSTextView, completions words: [String], forPartialWordRange range: NSRange,
+                      indexOfSelectedItem index: UnsafeMutablePointer<Int>?) -> [String] {
+            index?.pointee = 0
+            return suggestions(tv)
+        }
+
+        /// Text from the start of the cursor's line, and whether the line above is blank.
+        private func suggestions(_ tv: NSTextView) -> [String] {
+            let ns = tv.string as NSString
+            let cursor = tv.selectedRange().location
+            guard cursor <= ns.length else { return [] }
+            let lineStart = ns.lineRange(for: NSRange(location: cursor, length: 0)).location
+            let line = ns.substring(with: NSRange(location: lineStart, length: cursor - lineStart))
+            var afterBlank = true
+            if lineStart > 0 {
+                let prev = ns.lineRange(for: NSRange(location: lineStart - 1, length: 0))
+                afterBlank = ns.substring(with: prev).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+            return parent.suggest(line, afterBlank)
         }
 
         func textDidEndEditing(_ notification: Notification) { parent.onEndEditing() }
@@ -138,6 +176,13 @@ struct ScriptTextView: NSViewRepresentable {
 /// cuts the selection, undoably, and hands it to the Graveyard.
 final class SceneTextView: NSTextView {
     var onBury: ((String) -> Void)?
+
+    /// Completions replace the whole line typed so far ("INT. HO" → "INT. HOUSE"), not just the last word.
+    override var rangeForUserCompletion: NSRange {
+        let cursor = selectedRange().location
+        let start = (string as NSString).lineRange(for: NSRange(location: cursor, length: 0)).location
+        return NSRange(location: start, length: cursor - start)
+    }
 
     @objc func sendToGraveyard(_ sender: Any?) {
         let range = selectedRange()
