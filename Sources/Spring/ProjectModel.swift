@@ -14,6 +14,7 @@ final class ProjectModel {
 
     @ObservationIgnored private var pending: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var scopedURL: URL?
+    @ObservationIgnored private var watcher: FolderWatcher?
     private static let bookmarkKey = "lastProjectBookmark"
 
     init() {
@@ -58,6 +59,7 @@ final class ProjectModel {
             viewMode = .script
             tree = ProjectIO.tree(at: url, folderOrder: Prefs.projectFolders)
             loadBoard()
+            watcher = FolderWatcher(url) { [weak self] in self?.syncWithDisk() }
             projectURL = url
             conflicts = []
             errorMessage = nil
@@ -417,5 +419,37 @@ final class ProjectModel {
             for: line, afterBlank: afterBlank,
             characters: Autocomplete.characters(fileStems: stems(in: "Characters"), sceneBodies: bodies),
             locations: Autocomplete.locations(fileStems: stems(in: "Locations"), sceneBodies: bodies))
+    }
+
+    // MARK: Changes made outside Spring
+
+    /// Runs on every file-system change in the project (including Spring's own saves, which are no-ops here).
+    func syncWithDisk() {
+        guard let root = projectURL else { return }
+        let dirty = Set(pending.keys)
+        let r = ProjectIO.sync(scenes, dirty: dirty, conflicts: conflicts, in: root)
+        if r.changed { scenes = r.scenes }
+        if r.conflicts != conflicts { conflicts = r.conflicts }
+        if let id = selected, !scenes.contains(where: { $0.id == id }) { selected = nil }
+        refreshTree()
+        syncNote()
+        syncBoard()
+    }
+
+    private func syncNote() {
+        guard let n = note else { return }
+        guard FileManager.default.fileExists(atPath: n.url.path) else {
+            if noteSave == nil { note = nil; viewMode = .script } else { noteConflict = true }
+            return
+        }
+        let disk = (try? FileManager.default.attributesOfItem(atPath: n.url.path))?[.modificationDate] as? Date
+        guard let disk, let known = n.knownModDate, disk > known else { return }
+        if noteSave == nil, !noteConflict { note = try? ProjectIO.readRaw(n.url) } else { noteConflict = true }
+    }
+
+    private func syncBoard() {
+        guard let url = boardURL, boardSave == nil else { return }
+        let disk = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
+        if disk != boardModDate { loadBoard() }
     }
 }

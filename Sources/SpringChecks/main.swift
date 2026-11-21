@@ -191,5 +191,32 @@ check(Autocomplete.suggestions(for: "INT. BAR - N", afterBlank: true, characters
 check(Autocomplete.suggestions(for: "INT. HOUSE - K", afterBlank: true, characters: names, locations: places) == ["INT. HOUSE - KITCHEN"], "sub-location after a dash")
 check(Autocomplete.suggestions(for: "SARAH (", afterBlank: true, characters: names, locations: places) == ["SARAH (V.O.)", "SARAH (O.S.)", "SARAH (CONT'D)"], "extensions")
 
+// Sync with changes made outside Spring
+let sp = dir.appending(path: "sync-project")
+try ProjectIO.createProject(at: sp, folders: ["Scenes"])
+let sd = sp.appending(path: "Scenes")
+try "---\nscene: 1\n---\nINT. A\n".write(to: sd.appending(path: "a.fountain.md"), atomically: true, encoding: .utf8)
+try "---\nscene: 2\n---\nINT. B\n".write(to: sd.appending(path: "b.fountain.md"), atomically: true, encoding: .utf8)
+var live = try ProjectIO.loadScenes(in: sp)
+let future = Date().addingTimeInterval(60)
+func touch(_ name: String, _ text: String) throws {
+    try text.write(to: sd.appending(path: name), atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.modificationDate: future], ofItemAtPath: sd.appending(path: name).path)
+}
+var r = ProjectIO.sync(live, dirty: [], conflicts: [], in: sp)
+check(!r.changed && r.scenes.map(\.heading) == ["INT. A", "INT. B"], "no change, no reload")
+try touch("a.fountain.md", "---\nscene: 1\n---\nINT. A EDITED\n")
+r = ProjectIO.sync(live, dirty: [], conflicts: [], in: sp)
+check(r.changed && r.scenes[0].heading == "INT. A EDITED" && r.scenes[0].id == live[0].id, "clean scene reloaded in place")
+r = ProjectIO.sync(live, dirty: [live[0].id], conflicts: [], in: sp)
+check(r.conflicts == [live[0].id] && r.scenes[0].heading == "INT. A", "dirty scene becomes a conflict, edits kept")
+live = ProjectIO.sync(live, dirty: [], conflicts: [], in: sp).scenes
+try "---\nscene: 3\n---\nINT. C\n".write(to: sd.appending(path: "c.fountain.md"), atomically: true, encoding: .utf8)
+try FileManager.default.removeItem(at: sd.appending(path: "b.fountain.md"))
+r = ProjectIO.sync(live, dirty: [], conflicts: [], in: sp)
+check(r.scenes.map(\.heading) == ["INT. A EDITED", "INT. C"], "new file added, deleted file dropped: \(r.scenes.map(\.heading))")
+r = ProjectIO.sync(live, dirty: [live[1].id], conflicts: [], in: sp)
+check(r.scenes.contains { $0.id == live[1].id } && r.conflicts.contains(live[1].id), "deleted while dirty is kept as a conflict")
+
 try? FileManager.default.removeItem(at: dir)
 print("SpringChecks: all passed")

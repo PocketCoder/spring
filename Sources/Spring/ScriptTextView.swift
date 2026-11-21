@@ -91,7 +91,11 @@ struct ScriptTextView: NSViewRepresentable {
         let sizeChanged = old.fontSize != fontSize || old.fontName != fontName
         context.coordinator.parent = self
         if tv.string != text {
+            // Text changed outside Spring: keep the cursor where it was (clamped), not at the end.
+            let sel = tv.selectedRange()
             tv.string = text
+            let len = (text as NSString).length
+            tv.setSelectedRange(NSRange(location: min(sel.location, len), length: 0))
             context.coordinator.restyle(tv)
         } else if sizeChanged {
             context.coordinator.restyle(tv)

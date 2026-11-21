@@ -293,3 +293,55 @@ extension ProjectIO {
         return url
     }
 }
+
+// MARK: Keeping up with changes made outside Spring (Obsidian, Finder, sync)
+
+extension ProjectIO {
+    public struct SyncResult {
+        public var scenes: [SceneFile]
+        public var conflicts: Set<UUID>
+        /// False when nothing on disk differed from what Spring holds.
+        public var changed: Bool
+    }
+
+    static func key(_ url: URL) -> String { url.resolvingSymlinksInPath().path.lowercased() }
+
+    /// Brings the in-memory scenes up to date with `Scenes/`:
+    /// files changed outside are reloaded, unless Spring has unsaved edits (`dirty`), which makes them conflicts;
+    /// new files are added; files deleted or renamed outside are dropped (the new name is picked up as a new file).
+    public static func sync(_ scenes: [SceneFile], dirty: Set<UUID>, conflicts: Set<UUID>, in project: URL) -> SyncResult {
+        let dir = project.appending(path: "Scenes")
+        let onDisk = ((try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil, options: .skipsHiddenFiles)) ?? [])
+            .filter { ext(of: $0) != nil }
+        var conflicts = conflicts
+        var changed = false
+        var result: [SceneFile] = []
+        for var s in scenes {
+            guard FileManager.default.fileExists(atPath: s.url.path) else {
+                if dirty.contains(s.id) { conflicts.insert(s.id); result.append(s) } else { changed = true }
+                continue
+            }
+            if let disk = modDate(s.url), let known = s.knownModDate, disk > known {
+                if dirty.contains(s.id) || conflicts.contains(s.id) {
+                    conflicts.insert(s.id)
+                } else if let fresh = try? read(s.url) {
+                    s.file = fresh.file
+                    s.noteNumber = fresh.noteNumber
+                    s.knownModDate = fresh.knownModDate
+                    changed = true
+                }
+            }
+            result.append(s)
+        }
+        let known = Set(result.map { key($0.url) })
+        for url in onDisk where !known.contains(key(url)) {
+            if let s = try? read(url) { result.append(s); changed = true }
+        }
+        if changed {
+            result = result.enumerated().sorted {
+                ($0.element.number ?? .max, $0.offset) < ($1.element.number ?? .max, $1.offset)
+            }.map(\.element)
+        }
+        return SyncResult(scenes: result, conflicts: conflicts, changed: changed)
+    }
+}
