@@ -70,9 +70,34 @@ public enum ProjectIO {
         return text.replacing(re) { "[[" + String($0.output[1].substring ?? "") + new }
     }
 
+    /// Rewrites `[text](old%20name.md)`, `[text](Scenes/old%20name.md#part)` and `[text](<old name.md>)`.
+    public static func rewriteMarkdownLinks(in text: String, from oldFile: String, to newFile: String) -> String {
+        let enc = { (s: String) in s.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "()"))) ?? s }
+        var out = text
+        for (old, new) in [(enc(oldFile), enc(newFile)), (oldFile, newFile)] {
+            let pattern = #"\]\((<?)((?:[^)>\n]*/)?)"# + NSRegularExpression.escapedPattern(for: old) + #"((?:#[^)>\n]*)?>?\))"#
+            guard let re = try? NSRegularExpression(pattern: pattern) else { continue }
+            let tpl = NSRegularExpression.escapedTemplate(for: new)
+            out = re.stringByReplacingMatches(in: out, range: NSRange(out.startIndex..., in: out), withTemplate: "]($1$2" + tpl + "$3")
+        }
+        return out
+    }
+
+    /// Renames a file in place (extension kept) and returns its new URL.
+    public static func rename(_ url: URL, to name: String) throws -> URL {
+        let ext = ext(of: url) ?? (url.pathExtension.isEmpty ? "" : "." + url.pathExtension)
+        let clean = name.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
+        let target = url.deletingLastPathComponent().appending(path: clean + ext)
+        guard target.lastPathComponent != url.lastPathComponent else { return url }
+        guard !FileManager.default.fileExists(atPath: target.path) || target.path.lowercased() == url.path.lowercased() else {
+            throw CocoaError(.fileWriteFileExists)
+        }
+        try FileManager.default.moveItem(at: url, to: target)
+        return target
+    }
+
     /// After a rename, fixes links in every `.md` and `.canvas` file under `root`.
     /// ponytail: only the folder Spring can reach (the project, or the vault once it is chosen in Settings);
-    /// markdown-style `[text](path.md)` links are not rewritten.
     public static func updateLinks(under root: URL, from oldURL: URL, to newURL: URL) {
         let oldLink = linkName(of: oldURL), newLink = linkName(of: newURL)
         let oldFile = oldURL.lastPathComponent, newFile = newURL.lastPathComponent
@@ -81,7 +106,7 @@ public enum ProjectIO {
             let ext = url.pathExtension.lowercased()
             guard ext == "md" || ext == "canvas", let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
             let updated = ext == "md"
-                ? rewriteLinks(in: text, from: oldLink, to: newLink)
+                ? rewriteMarkdownLinks(in: rewriteLinks(in: text, from: oldLink, to: newLink), from: oldFile, to: newFile)
                 : text.replacingOccurrences(of: "/\(oldFile)\"", with: "/\(newFile)\"").replacingOccurrences(of: "\"\(oldFile)\"", with: "\"\(newFile)\"")
             if updated != text { try? updated.write(to: url, atomically: true, encoding: .utf8) }
         }
@@ -356,5 +381,17 @@ extension ProjectIO {
             }.map(\.element)
         }
         return SyncResult(scenes: result, conflicts: conflicts, changed: changed)
+    }
+}
+
+// MARK: Colour labels (corkboard)
+extension SceneFile {
+    public static let labels = ["red", "orange", "yellow", "green", "blue", "purple"]
+    /// A `color` property, so the label also shows in Obsidian's Properties. Markdown scenes only.
+    public var colorLabel: String? { isMarkdown ? file.value("color").map { $0.lowercased() } : nil }
+    public var canLabel: Bool { isMarkdown }
+    public mutating func setColorLabel(_ name: String?) {
+        guard isMarkdown else { return }
+        if let name { file.set("color", name) } else { file.frontmatter?.removeAll { $0.hasPrefix("color:") } }
     }
 }

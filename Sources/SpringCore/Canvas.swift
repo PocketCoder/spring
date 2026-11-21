@@ -123,6 +123,31 @@ public struct CanvasBoard {
         return id
     }
 
+    public mutating func renameColumn(_ id: String, _ label: String) {
+        guard let i = nodes.firstIndex(where: { $0["id"] as? String == id }) else { return }
+        nodes[i]["label"] = label
+    }
+
+    public mutating func setColor(_ id: String, _ color: String?) {
+        guard let i = nodes.firstIndex(where: { $0["id"] as? String == id }) else { return }
+        if let color { nodes[i]["color"] = color } else { nodes[i].removeValue(forKey: "color") }
+    }
+
+    /// Removes a group; its cards stay where they are (and show as not in a group).
+    public mutating func removeColumn(_ id: String) {
+        nodes.removeAll { $0["id"] as? String == id && $0["type"] as? String == "group" }
+    }
+
+    /// Titles of the cards this card's arrows point to.
+    public func links(from id: String) -> [String] {
+        let edges = root["edges"] as? [[String: Any]] ?? []
+        let targets = edges.filter { $0["fromNode"] as? String == id }.compactMap { $0["toNode"] as? String }
+        return targets.compactMap { t in nodes.first { $0["id"] as? String == t }.map { n in
+            let c = Self.card(n)
+            return c.file.map { ($0 as NSString).lastPathComponent } ?? (c.title.isEmpty ? (n["label"] as? String ?? "") : c.title)
+        } }
+    }
+
     public mutating func setText(_ id: String, _ text: String) {
         guard let i = nodes.firstIndex(where: { $0["id"] as? String == id }) else { return }
         nodes[i]["text"] = text

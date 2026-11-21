@@ -15,6 +15,12 @@ struct BinderView: View {
                     }
                     .tag("s:" + scene.id.uuidString)
                     .contextMenu {
+                        if Prefs.naming == .keep {
+                            Button("Rename…") {
+                                let stem = ProjectIO.stem(of: scene.url)
+                                if let name = askForText("Rename scene file", initial: stem) { model.renameFile(scene.url, to: name) }
+                            }
+                        }
                         Button("Show in Finder") { reveal(scene.url) }
                         Divider()
                         Button("Send Scene to Graveyard") { model.buryScene(scene.id) }
@@ -64,6 +70,11 @@ struct BinderView: View {
     @ViewBuilder private func menu(for node: FileNode) -> some View {
         if node.isFolder {
             Button("New Note") { model.newNote(in: node.url) }
+        }
+        if !node.isFolder {
+            Button("Rename…") {
+                if let name = askForText("Rename \(node.name)", initial: node.name) { model.renameFile(node.url, to: name) }
+            }
         }
         Button("Show in Finder") { reveal(node.url) }
         if !node.isFolder, node.url.deletingLastPathComponent().lastPathComponent != "Graveyard" {

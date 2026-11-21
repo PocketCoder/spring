@@ -319,5 +319,38 @@ check(ProjectIO.targetURL(for: nameScene, number: 3, naming: .numbered).lastPath
 check(ProjectIO.targetURL(for: nameScene, number: 3, naming: .keep).lastPathComponent == "x.fountain.md", "keep name")
 check(ProjectIO.targetURL(for: nameScene, number: 3, naming: .heading).lastPathComponent == "INT. BAR - NIGHT.fountain.md", "heading name")
 
+// Colour labels and board editing
+var labelled = SceneFile(url: URL(filePath: "/x/a.fountain.md"), file: MarkdownFile(text: "---\nscene: 1\n---\nINT. A\n"))
+labelled.setColorLabel("green")
+check(labelled.colorLabel == "green" && labelled.file.text.contains("color: green"), "colour label set")
+labelled.setColorLabel(nil)
+check(labelled.colorLabel == nil && !labelled.file.text.contains("color"), "colour label cleared")
+check(!SceneFile(url: URL(filePath: "/x/a.fountain"), file: MarkdownFile(text: "INT. A")).canLabel, "plain .fountain can't hold a label")
+var ob2 = try CanvasBoard(data: Data(obsidian.utf8))
+ob2.renameColumn("g", "Act 1"); ob2.setColor("g", "4")
+check(ob2.columns[0].label == "Act 1" && ob2.columns[0].color == "4", "rename and recolour column")
+check(ob2.links(from: "a") == ["A"], "arrow targets: \(ob2.links(from: "a"))")
+ob2.removeColumn("g")
+check(ob2.columns.map(\.label) == ["Not in a group"] && ob2.columns[0].cards.count == 3, "removing a column keeps its cards")
+
+// Markdown-style links and renaming
+check(ProjectIO.rewriteMarkdownLinks(in: "[a](INT.%20BAR.md) [b](Scenes/INT.%20BAR.md#top) [c](<INT. BAR.md>) [d](INT.%20BARN.md)", from: "INT. BAR.md", to: "INT. PUB.md")
+      == "[a](INT.%20PUB.md) [b](Scenes/INT.%20PUB.md#top) [c](<INT. PUB.md>) [d](INT.%20BARN.md)", "markdown links: \(ProjectIO.rewriteMarkdownLinks(in: "[a](INT.%20BAR.md) [b](Scenes/INT.%20BAR.md#top) [c](<INT. BAR.md>) [d](INT.%20BARN.md)", from: "INT. BAR.md", to: "INT. PUB.md"))")
+let renamed = try ProjectIO.rename(proj.appending(path: "Notes/Untitled.md"), to: "Ideas")
+check(renamed.lastPathComponent == "Ideas.md" && FileManager.default.fileExists(atPath: renamed.path), "rename keeps extension")
+
+// Nothing is cut, however long
+let wall = (1...80).map { "Line \($0) of one enormous centred thing." }.joined(separator: " ")
+let tall = SP.paginate(["> \(wall) <", "INT. A\n\nAfter."], options: SP.Options(linesPerPage: 20))
+check(tall.flatMap { $0 }.compactMap { $0 }.count > 20 && tall.last?.compactMap { $0 }.last?.text == "After.", "tall block carried over, not cut")
+
+// Word export
+check(Zip.crc32(Data("123456789".utf8)) == 0xCBF4_3926, "crc32")
+let docx = DOCX.document(scripts: ["INT. BAR - NIGHT\n\nBilly & Sarah.\n\nBILLY\n(quiet)\nShut.\n\nSARAH ^\nNo.\n\n===\n\nCUT TO:"], titlePage: "Title: Bar", pageSize: (595.28, 841.89))
+check(docx.prefix(4) == Data([0x50, 0x4B, 0x03, 0x04]), "docx is a zip")
+let docXML = String(decoding: docx, as: UTF8.self)
+check(docXML.contains("word/document.xml") && docXML.contains("<w:keepNext/>") && docXML.contains("<w:tbl>") && docXML.contains("<w:pageBreakBefore/>"), "docx keeps headings with next, dual table, page break")
+check(docXML.contains("Billy &amp; Sarah.") && docXML.contains(#"w:left="2160""#), "docx escaping and margins")
+
 try? FileManager.default.removeItem(at: dir)
 print("SpringChecks: all passed")

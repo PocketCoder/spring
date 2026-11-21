@@ -78,6 +78,22 @@ struct BeatColumn: View {
             Text(column.label.isEmpty ? "Untitled" : column.label)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(canvasColor(column.color))
+                .contextMenu {
+                    if column.id != CanvasBoard.Column.looseID {
+                        Button("Rename…") {
+                            if let name = askForText("Rename column", initial: column.label) { model.editBoard { $0.renameColumn(column.id, name) } }
+                        }
+                        Menu("Colour") {
+                            Button("None") { model.editBoard { $0.setColor(column.id, nil) } }
+                            ForEach(Array(["Red", "Orange", "Yellow", "Green", "Cyan", "Purple"].enumerated()), id: \.offset) { i, name in
+                                Button(name) { model.editBoard { $0.setColor(column.id, "\(i + 1)") } }
+                            }
+                        }
+                        Divider()
+                        Button("Delete Column") { model.editBoard { $0.removeColumn(column.id) } }
+                    }
+                }
+                .help("Right-click to rename, recolour or delete")
             ForEach(column.cards) { BeatCard(card: $0, column: column.id) }
             HStack {
                 Button { addText() } label: { Label("Card", systemImage: "plus") }
@@ -132,7 +148,16 @@ struct BeatCard: View {
                 }
             }
         }
+        .overlay(alignment: .bottomLeading) {
+            let links = model.board?.links(from: card.id) ?? []
+            if !links.isEmpty {
+                Text(links.map { "→ " + $0 }.joined(separator: "  "))
+                    .font(.system(size: 10)).foregroundStyle(.tertiary).lineLimit(1)
+                    .padding(.horizontal, 12).padding(.bottom, 4)
+            }
+        }
         .padding(.horizontal, 12).padding(.vertical, 10)
+        .padding(.bottom, (model.board?.links(from: card.id).isEmpty ?? true) ? 0 : 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(nsColor: Theme.paper), in: RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(model.selectedCard == card.id ? Color(nsColor: Theme.accent) : Color(nsColor: Theme.line),

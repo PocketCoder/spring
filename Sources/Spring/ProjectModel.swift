@@ -586,4 +586,26 @@ final class ProjectModel {
             if self?.toast?.id == t.id { self?.toast = nil }
         }
     }
+
+    func setLabel(_ id: UUID, _ name: String?) {
+        guard let i = scenes.firstIndex(where: { $0.id == id }) else { return }
+        scenes[i].setColorLabel(name)
+        save(id, rename: false)
+    }
+
+    /// Renames a file from the binder and fixes links to it across the project (or vault).
+    func renameFile(_ url: URL, to name: String) {
+        guard let root = projectURL else { return }
+        if let i = scenes.firstIndex(where: { $0.url == url }) { save(scenes[i].id, rename: false) }
+        if note?.url == url { saveNote() }
+        do {
+            let new = try ProjectIO.rename(url, to: name)
+            if let i = scenes.firstIndex(where: { $0.url == url }) { scenes[i].url = new }
+            if note?.url == url { note?.url = new }
+            ProjectIO.updateLinks(under: vaultContaining(root) ?? root, from: url, to: new)
+            refreshTree()
+        } catch {
+            errorMessage = "Couldn't rename \(url.lastPathComponent): \(error.localizedDescription)"
+        }
+    }
 }

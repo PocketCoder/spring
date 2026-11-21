@@ -32,7 +32,7 @@ enum PDFExport {
         return out
     }
 
-    static func render(scripts: [String], titlePage: String?, paper: Paper, sceneNumbers: Bool) -> Data {
+    static func render(scripts: [String], titlePage: String?, paper: Paper, sceneNumbers: Bool, watermark: String = "") -> Data {
         let pages = Screenplay.paginate(scripts, options: .init(linesPerPage: paper.linesPerPage, sceneNumbers: sceneNumbers))
         let title = titlePage.map(Screenplay.titlePage)
         let data = NSMutableData()
@@ -68,6 +68,18 @@ enum PDFExport {
             ctx.beginPDFPage(nil)
             NSGraphicsContext.saveGraphicsState()
             NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: false)
+            if !watermark.isEmpty {
+                // Large, pale and diagonal, under the text.
+                let mark = NSAttributedString(string: watermark, attributes: [
+                    .font: NSFontManager.shared.convert(NSFont(name: "Courier Prime", size: 120) ?? .boldSystemFont(ofSize: 120), toHaveTrait: .boldFontMask),
+                    .foregroundColor: NSColor(white: 0, alpha: 0.08)])
+                let sz = mark.size()
+                ctx.saveGState()
+                ctx.translateBy(x: size.width / 2, y: size.height / 2)
+                ctx.rotate(by: .pi / 4)
+                mark.draw(at: CGPoint(x: -sz.width / 2, y: -sz.height / 2))
+                ctx.restoreGState()
+            }
             body()
             NSGraphicsContext.restoreGraphicsState()
             ctx.endPDFPage()
@@ -100,6 +112,7 @@ struct PDFExportOptions: View {
     @AppStorage("pdfPaper") var paper = PDFExport.Paper.a4.rawValue
     @AppStorage("pdfTitlePage") var titlePage = true
     @AppStorage("pdfSceneNumbers") var sceneNumbers = false
+    @AppStorage("pdfWatermark") var watermark = ""
 
     var body: some View {
         HStack(spacing: 20) {
@@ -109,6 +122,7 @@ struct PDFExportOptions: View {
             .fixedSize()
             Toggle("Title page", isOn: $titlePage)
             Toggle("Scene numbers", isOn: $sceneNumbers)
+            TextField("Watermark", text: $watermark, prompt: Text("Watermark (optional)")).frame(width: 170)
         }
         .padding(12)
     }
@@ -135,7 +149,8 @@ extension ProjectModel {
         let withTitle = d.object(forKey: "pdfTitlePage") == nil || d.bool(forKey: "pdfTitlePage")
         let title = withTitle ? try? String(contentsOf: root.appending(path: "front-matter.md"), encoding: .utf8) : nil
         let data = PDFExport.render(scripts: scenes.map(\.file.body), titlePage: title, paper: paper,
-                                    sceneNumbers: d.bool(forKey: "pdfSceneNumbers"))
+                                    sceneNumbers: d.bool(forKey: "pdfSceneNumbers"),
+                                    watermark: d.string(forKey: "pdfWatermark")?.trimmingCharacters(in: .whitespaces) ?? "")
         do {
             try data.write(to: url, options: .atomic)
             NSWorkspace.shared.open(url)
@@ -164,60 +179,6 @@ extension ProjectModel {
     }
 }
 
-/// Word (.docx) export: one styled paragraph per element with screenplay indents and page margins, so Word reflows it.
-enum DOCXExport {
-    static func document(scripts: [String], titlePage: String?, paper: PDFExport.Paper) -> Data? {
-        let cw: CGFloat = 7.2 // Courier 12 pt advance
-        let out = NSMutableAttributedString()
-        func para(_ text: String, head: CGFloat = 0, tail: CGFloat = 0, align: NSTextAlignment = .left, before: CGFloat = 12,
-                  bold: Bool = false, pageBreakBefore: Bool = false) {
-            let p = NSMutableParagraphStyle()
-            p.firstLineHeadIndent = head * cw
-            p.headIndent = head * cw
-            if tail > 0 { p.tailIndent = -(60 - tail) * cw } // negative: measured from the right margin, which Word keeps
-            p.alignment = align
-            p.paragraphSpacingBefore = before
-            if pageBreakBefore, out.length > 0 { out.append(NSAttributedString(string: "\u{0C}")) }
-            let line = NSMutableAttributedString()
-            for r in Screenplay.runs(text) {
-                var attrs: [NSAttributedString.Key: Any] = [.font: PDFExport.font(bold: r.bold || bold, italic: r.italic), .paragraphStyle: p]
-                if r.underline { attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue }
-                line.append(NSAttributedString(string: r.text.replacingOccurrences(of: "\n", with: "\u{2028}"), attributes: attrs))
-            }
-            if line.length == 0 { line.append(NSAttributedString(string: "", attributes: [.font: PDFExport.font(bold: false, italic: false), .paragraphStyle: p])) }
-            line.append(NSAttributedString(string: "\n", attributes: [.font: PDFExport.font(bold: false, italic: false), .paragraphStyle: p]))
-            out.append(line)
-        }
-        if let titlePage {
-            let tp = Screenplay.titlePage(titlePage)
-            if !tp.isEmpty {
-                for (n, l) in tp.centre.enumerated() { para(l.text, align: .center, before: n == 0 ? 216 : 0, bold: n == 0) }
-                for (n, l) in tp.bottomLeft.enumerated() { para(l.text, before: n == 0 ? 216 : 0) }
-            }
-        }
-        var breakNext = out.length > 0
-        for e in Screenplay.elements(scripts) {
-            let pb = breakNext
-            switch e.kind {
-            case .pageBreak: breakNext = true; continue
-            case .heading: para(e.text, before: 24, bold: true, pageBreakBefore: pb)
-            case .action: para(e.text, pageBreakBefore: pb)
-            case .character: para(e.text, head: 22, pageBreakBefore: pb)
-            case .parenthetical: para(e.text, head: 16, tail: 41, before: 0, pageBreakBefore: pb)
-            case .dialogue: para(e.text, head: 10, tail: 45, before: 0, pageBreakBefore: pb)
-            case .transition: para(e.text, align: .right, pageBreakBefore: pb)
-            case .centered: para(e.text, align: .center, pageBreakBefore: pb)
-            }
-            breakNext = false
-        }
-        let attrs: [NSAttributedString.DocumentAttributeKey: Any] = [
-            .documentType: NSAttributedString.DocumentType.officeOpenXML,
-            .paperSize: paper.size, .leftMargin: 108.0, .rightMargin: 72.0, .topMargin: 72.0, .bottomMargin: 72.0,
-        ]
-        return try? out.data(from: NSRange(location: 0, length: out.length), documentAttributes: attrs)
-    }
-}
-
 extension ProjectModel {
     /// Word or Final Draft export of the whole script.
     func export(as ext: String) {
@@ -233,8 +194,8 @@ extension ProjectModel {
         let title = try? String(contentsOf: root.appending(path: "front-matter.md"), encoding: .utf8)
         let scripts = scenes.map(\.file.body)
         let paper = PDFExport.Paper(rawValue: UserDefaults.standard.string(forKey: "pdfPaper") ?? "") ?? .a4
-        let data = ext == "fdx" ? Data(FDX.document(scripts: scripts, titlePage: title).utf8)
-                                : DOCXExport.document(scripts: scripts, titlePage: title, paper: paper)
+        let data: Data? = ext == "fdx" ? Data(FDX.document(scripts: scripts, titlePage: title).utf8)
+                                : DOCX.document(scripts: scripts, titlePage: title, pageSize: (paper.size.width, paper.size.height))
         do {
             guard let data else { throw CocoaError(.fileWriteUnknown) }
             try data.write(to: url, options: .atomic)

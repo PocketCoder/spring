@@ -25,9 +25,10 @@ struct SpringApp: App {
             let title = try? String(contentsOf: root.appending(path: "front-matter.md"), encoding: .utf8)
             let out = URL(filePath: args[i + 2]), scripts = scenes.map(\.file.body)
             let data: Data? = switch out.pathExtension {
-            case "docx": DOCXExport.document(scripts: scripts, titlePage: title, paper: .a4)
+            case "docx": DOCX.document(scripts: scripts, titlePage: title, pageSize: (595.28, 841.89))
             case "fdx": Data(FDX.document(scripts: scripts, titlePage: title).utf8)
-            default: PDFExport.render(scripts: scripts, titlePage: title, paper: .a4, sceneNumbers: args.contains("--scene-numbers"))
+            default: PDFExport.render(scripts: scripts, titlePage: title, paper: .a4, sceneNumbers: args.contains("--scene-numbers"),
+                                      watermark: args.firstIndex(of: "--watermark").map { args[$0 + 1] } ?? "")
             }
             try? data?.write(to: out)
             exit(0)

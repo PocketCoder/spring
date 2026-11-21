@@ -211,9 +211,9 @@ public enum Screenplay {
                 if sceneNumbers { ls[0].sceneNumber = e.sceneNumber }
                 blocks.append(Block(kind: .heading, lines: ls, spaceBefore: 2))
             case .transition:
-                blocks.append(Block(kind: .transition, lines: [Line(runs: runs(e.text), align: .right)], spaceBefore: 1))
+                blocks.append(Block(kind: .transition, lines: wrap(runs(e.text), width: actionWidth).map { Line(runs: $0, align: .right) }, spaceBefore: 1))
             case .centered:
-                blocks.append(Block(kind: .centered, lines: [Line(runs: runs(e.text), align: .center)], spaceBefore: 1))
+                blocks.append(Block(kind: .centered, lines: wrap(runs(e.text), width: actionWidth).map { Line(runs: $0, align: .center) }, spaceBefore: 1))
             case .action, .parenthetical, .dialogue:
                 let ls = e.text.split(separator: "\n", omittingEmptySubsequences: false)
                     .flatMap { wrap(runs(String($0)), width: actionWidth).map { Line(runs: $0) } }
@@ -313,8 +313,15 @@ public enum Screenplay {
                 block.spaceBefore = 0
                 queue.insert(block, at: queue.startIndex)
             default:
+                if page.isEmpty, block.lines.count > max {
+                    // Taller than a whole page: fill this page and carry the rest over, never drop lines.
+                    page = block.lines.prefix(max).map { Optional($0) }
+                    block.lines = Array(block.lines.dropFirst(max))
+                    block.spaceBefore = 0
+                } else {
+                    newPage()
+                }
                 newPage()
-                if block.lines.count > max { block.lines = Array(block.lines.prefix(max)) } // ponytail: a single block taller than a page is cut
                 queue.insert(block, at: queue.startIndex)
             }
         }

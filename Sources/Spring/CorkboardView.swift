@@ -70,7 +70,7 @@ struct SceneCard: View {
                 .font(.system(size: 11, weight: .semibold)).monospacedDigit()
                 .foregroundStyle(.white)
                 .padding(.horizontal, 6).padding(.vertical, 2)
-                .background(isSelected ? Color(nsColor: Theme.accent) : .secondary, in: RoundedRectangle(cornerRadius: 4))
+                .background(scene.colorLabel.map(labelColor) ?? (isSelected ? Color(nsColor: Theme.accent) : .secondary), in: RoundedRectangle(cornerRadius: 4))
             Text(scene.heading)
                 .font(.custom("Courier Prime", size: 14).bold())
                 .lineLimit(2)
@@ -94,6 +94,12 @@ struct SceneCard: View {
         .onTapGesture(count: 2) { model.openInScript(scene.id) }
         .contextMenu {
             Button("Open in Script") { model.openInScript(scene.id) }
+            if scene.canLabel {
+                Menu("Label") {
+                    Button("None") { model.setLabel(scene.id, nil) }
+                    ForEach(SceneFile.labels, id: \.self) { name in Button(name.capitalized) { model.setLabel(scene.id, name) } }
+                }
+            }
             Divider()
             Button("Send Scene to Graveyard") { model.buryScene(scene.id) }
         }
@@ -147,4 +153,31 @@ struct SceneInspector: View {
         .padding(20)
         .background(Color(nsColor: Theme.paper))
     }
+}
+
+func labelColor(_ name: String) -> Color {
+    switch name {
+    case "red": return .red
+    case "orange": return .orange
+    case "yellow": return .yellow
+    case "green": return .green
+    case "blue": return .blue
+    case "purple": return .purple
+    default: return .secondary
+    }
+}
+
+/// A one-field text prompt (rename and the like).
+@MainActor func askForText(_ title: String, initial: String) -> String? {
+    let alert = NSAlert()
+    alert.messageText = title
+    let field = NSTextField(string: initial)
+    field.frame = NSRect(x: 0, y: 0, width: 280, height: 24)
+    alert.accessoryView = field
+    alert.addButton(withTitle: "OK")
+    alert.addButton(withTitle: "Cancel")
+    alert.window.initialFirstResponder = field
+    guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+    let value = field.stringValue.trimmingCharacters(in: .whitespaces)
+    return value.isEmpty ? nil : value
 }
