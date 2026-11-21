@@ -39,8 +39,13 @@ struct BinderView: View {
 
             Section(model.projectURL?.lastPathComponent ?? "Project") {
                 OutlineGroup(model.tree.filter { $0.url.lastPathComponent != "Scenes" }, children: \.children) { node in
-                    Label(node.name, systemImage: icon(for: node))
-                        .lineLimit(1)
+                    HStack {
+                        Label(node.name, systemImage: icon(for: node)).lineLimit(1)
+                        Spacer()
+                        if node.isFolder, let n = node.children?.count, n > 0 {
+                            Text("\(n)").font(.system(size: 11)).foregroundStyle(.tertiary).monospacedDigit()
+                        }
+                    }
                         .tag("f:" + node.url.path)
                         .contextMenu { menu(for: node) }
                 }
@@ -70,6 +75,9 @@ struct BinderView: View {
     @ViewBuilder private func menu(for node: FileNode) -> some View {
         if node.isFolder {
             Button("New Note") { model.newNote(in: node.url) }
+        }
+        if !node.isFolder, node.url.deletingLastPathComponent().lastPathComponent == "Characters" {
+            Button("Rename Character Everywhere…") { model.renameCharacter(file: node.url) }
         }
         if !node.isFolder {
             Button("Rename…") {

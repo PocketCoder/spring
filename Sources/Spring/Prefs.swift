@@ -92,12 +92,15 @@ struct EditorSettings: View {
     @AppStorage(Prefs.typewriter) private var typewriter = false
     @AppStorage(Prefs.dim) private var dim = false
     @AppStorage(Prefs.sceneNaming) private var naming = "heading"
+    @AppStorage("autocompleteFill") private var fill = true
 
     var body: some View {
         Form {
             Toggle("Typewriter scrolling", isOn: $typewriter)
             Text("Keeps the line you're writing in the middle of the window.").font(.caption).foregroundStyle(.secondary)
             Toggle("Dim all but the current paragraph", isOn: $dim)
+            Toggle("Fill in the first suggestion as you type", isOn: $fill)
+            Text("Off: suggestions show in a list and nothing is typed until you pick one.").font(.caption).foregroundStyle(.secondary)
             Picker("Scene file names:", selection: $naming) {
                 Text("First scene heading").tag("heading")
                 Text("Number and heading (003 INT. BAR - NIGHT)").tag("numbered")

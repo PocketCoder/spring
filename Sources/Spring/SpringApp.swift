@@ -59,6 +59,13 @@ struct SpringApp: App {
                 Button("New Project…") { model.newProject() }.keyboardShortcut("n", modifiers: [.command, .shift])
                 Button("Open Project…") { model.chooseProject() }.keyboardShortcut("o")
             }
+            CommandGroup(after: .textEditing) {
+                Button("Find in Script…") { model.showFind = true }.keyboardShortcut("f", modifiers: [.command, .shift])
+                    .disabled(model.projectURL == nil)
+            }
+            CommandGroup(replacing: .printItem) {
+                Button("Print…") { model.printScript() }.keyboardShortcut("p").disabled(model.projectURL == nil)
+            }
             CommandGroup(after: .pasteboard) {
                 Divider()
                 Button("Send to Graveyard") { NSApp.sendAction(#selector(SceneTextView.sendToGraveyard(_:)), to: nil, from: nil) }

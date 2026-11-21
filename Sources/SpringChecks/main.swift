@@ -352,5 +352,15 @@ let docXML = String(decoding: docx, as: UTF8.self)
 check(docXML.contains("word/document.xml") && docXML.contains("<w:keepNext/>") && docXML.contains("<w:tbl>") && docXML.contains("<w:pageBreakBefore/>"), "docx keeps headings with next, dual table, page break")
 check(docXML.contains("Billy &amp; Sarah.") && docXML.contains(#"w:left="2160""#), "docx escaping and margins")
 
+// Find, replace and character rename
+let bodiesF = ["INT. BAR\n\nBilly waits. billy.\n\nBILLY\nShut.", "EXT. HOUSE\n\nBillyboy runs."]
+let found = Search.find("billy", in: bodiesF)
+check(found.count == 4 && found[0].scene == 0 && found.last?.scene == 1, "find across scenes: \(found.count)")
+check(Search.find("billy", in: bodiesF, wholeWords: true).count == 3, "whole words")
+check(Search.find("Billy", in: bodiesF, caseSensitive: true).count == 2, "case sensitive")
+check(Search.replaceAll("billy", with: "Bill $1", in: "billy and Billy", wholeWords: true) == "Bill $1 and Bill $1", "replace is literal")
+let cues = "INT. A\n\nBILLY\nHi.\n\nBILLY (V.O.)\nThere.\n\nSARAH\nBilly?\n\nBILLY ^\nYes."
+check(Search.renameCharacter("Billy", to: "William", in: cues) == "INT. A\n\nWILLIAM\nHi.\n\nWILLIAM (V.O.)\nThere.\n\nSARAH\nBilly?\n\nWILLIAM ^\nYes.", "rename character cues only")
+
 try? FileManager.default.removeItem(at: dir)
 print("SpringChecks: all passed")

@@ -23,6 +23,9 @@ struct ContentView: View {
                     }
                 }
                 .toolbar { toolbar }
+                .inspector(isPresented: Binding(get: { model.showFind }, set: { model.showFind = $0 })) {
+                    FindPanel().inspectorColumnWidth(min: 260, ideal: 300, max: 420)
+                }
             }
         }
         // No hard title bar: the toolbar sits on the page colour with no separator, as in the design.
@@ -207,6 +210,9 @@ struct StatusLine: View {
         let index = model.focusedScene.flatMap { id in model.scenes.firstIndex { $0.id == id } }
         HStack(spacing: 14) {
             if let index { Text("Scene \(index + 1) of \(model.scenes.count)") } else { Text("\(model.scenes.count) scenes") }
+            if model.pageCount > 0 {
+                Text(model.focusedPage.map { "p. \($0) of \(model.pageCount)" } ?? "\(model.pageCount) \(model.pageCount == 1 ? "page" : "pages")")
+            }
             Text("\(model.wordCount.formatted()) words")
         }
         .font(.system(size: 11))
@@ -405,5 +411,47 @@ struct ToastView: View {
             .transition(.move(edge: .bottom).combined(with: .opacity))
             .accessibilityElement(children: .combine)
         }
+    }
+}
+
+/// Find (and replace) across every scene. Click a result to jump to it.
+struct FindPanel: View {
+    @Environment(ProjectModel.self) private var model
+    var body: some View {
+        let results = model.findResults
+        VStack(alignment: .leading, spacing: 10) {
+            TextField("Find in script", text: Binding(get: { model.findQuery }, set: { model.findQuery = $0 }))
+                .textFieldStyle(.roundedBorder)
+            TextField("Replace with", text: Binding(get: { model.replaceText }, set: { model.replaceText = $0 }))
+                .textFieldStyle(.roundedBorder)
+            HStack {
+                Toggle("Match case", isOn: Binding(get: { model.findCaseSensitive }, set: { model.findCaseSensitive = $0 }))
+                Toggle("Whole words", isOn: Binding(get: { model.findWholeWords }, set: { model.findWholeWords = $0 }))
+            }
+            .toggleStyle(.checkbox).font(.system(size: 12))
+            HStack {
+                Text(model.findQuery.isEmpty ? "" : "\(results.count) \(results.count == 1 ? "match" : "matches")")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                Spacer()
+                Button("Replace All") { model.replaceAll() }.disabled(results.isEmpty)
+            }
+            List(results) { m in
+                Button {
+                    model.focus(model.scenes[m.scene].id, atEnd: false, select: m.range)
+                } label: {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(m.scene + 1) · \(model.scenes[m.scene].heading)").font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary).lineLimit(1)
+                        Text(m.line).font(.custom("Courier Prime", size: 12)).lineLimit(2)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+        }
+        .padding(14)
+        .background(Color(nsColor: Theme.paper2))
     }
 }

@@ -323,10 +323,11 @@ extension ProjectIO {
     }
 
     /// `Untitled.md` (numbered if taken) in `folder`.
-    public static func newNote(in folder: URL, text: String = "") throws -> URL {
-        var url = folder.appending(path: "Untitled.md")
+    public static func newNote(in folder: URL, name: String = "Untitled", text: String = "") throws -> URL {
+        let clean = name.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
+        var url = folder.appending(path: "\(clean).md")
         var n = 2
-        while FileManager.default.fileExists(atPath: url.path) { url = folder.appending(path: "Untitled \(n).md"); n += 1 }
+        while FileManager.default.fileExists(atPath: url.path) { url = folder.appending(path: "\(clean) \(n).md"); n += 1 }
         try text.write(to: url, atomically: true, encoding: .utf8)
         return url
     }

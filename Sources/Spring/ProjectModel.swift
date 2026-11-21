@@ -1,5 +1,6 @@
 import AppKit
 import Observation
+import PDFKit
 import SwiftUI
 import SpringCore
 
@@ -127,6 +128,7 @@ final class ProjectModel {
             switch try ProjectIO.save(&scene, number: i + 1, marker: marker, rename: rename, naming: Prefs.naming) {
             case .saved(let oldURL):
                 scenes[i] = scene
+                updatePages()
                 if let oldURL, let root = projectURL {
                     ProjectIO.updateLinks(under: vaultContaining(root) ?? root, from: oldURL, to: scene.url)
                     refreshTree()
@@ -311,7 +313,9 @@ final class ProjectModel {
             case "Locations": Prefs.templateLocation
             default: Prefs.templateNote
             }
-            let url = try ProjectIO.newNote(in: folder, text: templateText(key, title: "Untitled") ?? "")
+            let prompt = folder.lastPathComponent == "Characters" ? "New character (e.g. BILLY (M24) - Shopkeeper)" : "New note in \(folder.lastPathComponent)"
+            guard let name = askForText(prompt, initial: "") else { return }
+            let url = try ProjectIO.newNote(in: folder, name: name, text: templateText(key, title: name) ?? "")
             refreshTree()
             openFile(url)
         } catch {
@@ -548,7 +552,7 @@ final class ProjectModel {
 
     // MARK: Focus across scenes, single-scene view, toast
 
-    struct FocusRequest: Equatable { let id: UUID; let atEnd: Bool; let token: Int }
+    struct FocusRequest: Equatable { let id: UUID; let atEnd: Bool; let token: Int; var range: NSRange? = nil }
     var focusRequest: FocusRequest?
     @ObservationIgnored private var focusToken = 0
 
@@ -560,10 +564,12 @@ final class ProjectModel {
     /// The scene shown in single-scene view.
     var currentScene: UUID? { focusedScene.flatMap { id in scenes.contains { $0.id == id } ? id : nil } ?? scenes.first?.id }
 
-    func focus(_ id: UUID, atEnd: Bool) {
+    func focus(_ id: UUID, atEnd: Bool, select range: NSRange? = nil) {
         focusToken += 1
         focusedScene = id
-        focusRequest = FocusRequest(id: id, atEnd: atEnd, token: focusToken)
+        focusRequest = FocusRequest(id: id, atEnd: atEnd, token: focusToken, range: range)
+        if range != nil { viewMode = .script; scrollTarget = id }
+        updatePages()
     }
 
     /// Arrow keys off the top or bottom of a scene move into the neighbouring one.
@@ -607,5 +613,78 @@ final class ProjectModel {
         } catch {
             errorMessage = "Couldn't rename \(url.lastPathComponent): \(error.localizedDescription)"
         }
+    }
+
+    // MARK: Find and replace
+
+    var showFind = false
+    var findQuery = ""
+    var replaceText = ""
+    var findCaseSensitive = false
+    var findWholeWords = false
+
+    var findResults: [Search.Match] {
+        Search.find(findQuery, in: scenes.map(\.file.body), caseSensitive: findCaseSensitive, wholeWords: findWholeWords)
+    }
+
+    func replaceAll() {
+        let count = findResults.count
+        guard count > 0 else { return }
+        let before = scenes.map { ($0.id, $0.file.body) }
+        for s in scenes {
+            update(s.id, body: Search.replaceAll(findQuery, with: replaceText, in: s.file.body, caseSensitive: findCaseSensitive, wholeWords: findWholeWords))
+        }
+        showToast("Replaced \(count) \(count == 1 ? "match" : "matches")") { [weak self] in
+            for (id, body) in before { self?.update(id, body: body) }
+        }
+    }
+
+    // MARK: Rename a character everywhere
+
+    /// Renames the character file and every cue for them; links to the file are updated.
+    func renameCharacter(file url: URL) {
+        let stem = ProjectIO.stem(of: url)
+        let old = Autocomplete.characterName(fromFileStem: stem)
+        guard let new = askForText("Rename \(old) in every scene", initial: old)?.uppercased(), new != old else { return }
+        var changed = 0
+        for s in scenes {
+            let body = Search.renameCharacter(old, to: new, in: s.file.body)
+            if body != s.file.body { changed += 1; update(s.id, body: body) }
+        }
+        let rest = stem.dropFirst(stem.uppercased().hasPrefix(old) ? old.count : 0)
+        renameFile(url, to: new + rest)
+        showToast("Renamed \(old) to \(new) in \(changed) \(changed == 1 ? "scene" : "scenes")")
+    }
+
+    // MARK: Pages
+
+    var pageCount = 0
+    var focusedPage: Int?
+
+    /// Page count and the page the cursor's scene starts on, as the PDF would print (A4 or Letter from export settings).
+    func updatePages() {
+        let paper = PDFExport.Paper(rawValue: UserDefaults.standard.string(forKey: "pdfPaper") ?? "") ?? .a4
+        let options = Screenplay.Options(linesPerPage: paper.linesPerPage)
+        let bodies = scenes.map(\.file.body)
+        pageCount = Screenplay.paginate(bodies, options: options).count
+        if let id = focusedScene, let i = scenes.firstIndex(where: { $0.id == id }) {
+            focusedPage = i == 0 ? 1 : Screenplay.paginate(Array(bodies.prefix(i + 1)), options: options).count
+        } else {
+            focusedPage = nil
+        }
+    }
+
+    func printScript() {
+        guard let root = projectURL else { return }
+        let d = UserDefaults.standard
+        let paper = PDFExport.Paper(rawValue: d.string(forKey: "pdfPaper") ?? "") ?? .a4
+        let title = (d.object(forKey: "pdfTitlePage") == nil || d.bool(forKey: "pdfTitlePage"))
+            ? try? String(contentsOf: root.appending(path: "front-matter.md"), encoding: .utf8) : nil
+        let data = PDFExport.render(scripts: scenes.map(\.file.body), titlePage: title, paper: paper,
+                                    sceneNumbers: d.bool(forKey: "pdfSceneNumbers"), watermark: d.string(forKey: "pdfWatermark") ?? "")
+        guard let doc = PDFDocument(data: data) else { return }
+        let info = NSPrintInfo.shared
+        info.paperSize = paper.size
+        doc.printOperation(for: info, scalingMode: .pageScaleNone, autoRotate: false)?.runModal(for: NSApp.keyWindow ?? NSWindow(), delegate: nil, didRun: nil, contextInfo: nil)
     }
 }

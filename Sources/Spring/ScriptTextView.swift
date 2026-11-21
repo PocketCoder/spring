@@ -36,7 +36,7 @@ enum Theme {
 /// Applies Fountain screenplay layout to a scene's text. Indents follow the standard
 /// 60-character page: cue at 22, dialogue 10–45, parenthetical 16–41.
 enum ScriptStyler {
-    static func apply(to storage: NSTextStorage, fontName: String, fontSize: CGFloat) {
+    static func apply(to storage: NSTextStorage, fontName: String, fontSize: CGFloat, caret: Int? = nil) {
         let text = storage.string
         let base = Theme.scriptFont(fontName, fontSize)
         let bold = NSFontManager.shared.convert(base, toHaveTrait: .boldFontMask)
@@ -48,7 +48,9 @@ enum ScriptStyler {
         let kinds = Fountain.classify(text)
         // Dual dialogue: the two speeches become the two cells of a one-row text table, side by side.
         var cells: [Int: NSTextTableBlock] = [:]
-        for pair in Fountain.dualPairs(text, kinds: kinds) {
+        // While the cursor is inside a pair, it lays out as ordinary dialogue so editing and arrow keys behave.
+        let caretLine = caret.map { c in (text as NSString).substring(to: min(c, (text as NSString).length)).filter { $0 == "\n" }.count }
+        for pair in Fountain.dualPairs(text, kinds: kinds) where !(caretLine.map { pair.left.contains($0) || pair.right.contains($0) } ?? false) {
             let table = NSTextTable()
             table.numberOfColumns = 2
             table.layoutAlgorithm = .fixedLayoutAlgorithm
@@ -163,7 +165,8 @@ struct ScriptTextView: NSViewRepresentable {
             DispatchQueue.main.async {
                 tv.window?.makeFirstResponder(tv)
                 let len = (tv.string as NSString).length
-                tv.setSelectedRange(NSRange(location: r.atEnd ? len : 0, length: 0))
+                if let range = r.range, range.location + range.length <= len { tv.setSelectedRange(range); tv.showFindIndicator(for: range) }
+                else { tv.setSelectedRange(NSRange(location: r.atEnd ? len : 0, length: 0)) }
                 tv.scrollRangeToVisible(tv.selectedRange())
             }
         }
@@ -206,7 +209,7 @@ struct ScriptTextView: NSViewRepresentable {
 
         func textView(_ tv: NSTextView, completions words: [String], forPartialWordRange range: NSRange,
                       indexOfSelectedItem index: UnsafeMutablePointer<Int>?) -> [String] {
-            index?.pointee = 0
+            index?.pointee = UserDefaults.standard.object(forKey: "autocompleteFill") as? Bool ?? true ? 0 : -1
             return suggestions(tv)
         }
 
@@ -227,12 +230,23 @@ struct ScriptTextView: NSViewRepresentable {
 
         func textDidEndEditing(_ notification: Notification) {
             parent.onEndEditing()
-            if let tv = notification.object as? NSTextView { clearDim(tv) }
+            if let tv = notification.object as? NSTextView { clearDim(tv); DispatchQueue.main.async { self.restyle(tv) } }
         }
         func textDidBeginEditing(_ notification: Notification) { parent.onBeginEditing() }
 
+        var lastPair: Int?
+
+        /// Which side-by-side pair (if any) the cursor is in.
+        func pairIndex(_ tv: NSTextView) -> Int? {
+            guard tv.window?.firstResponder === tv else { return nil }
+            let ns = tv.string as NSString
+            let line = ns.substring(to: min(tv.selectedRange().location, ns.length)).filter { $0 == "\n" }.count
+            return Fountain.dualPairs(tv.string).firstIndex { $0.left.contains(line) || $0.right.contains(line) }
+        }
+
         func textViewDidChangeSelection(_ notification: Notification) {
             guard let tv = notification.object as? SceneTextView, tv.window?.firstResponder === tv else { return }
+            if pairIndex(tv) != lastPair { restyle(tv) }
             applyDim(tv)
             if parent.typewriter { centreCaret(tv) }
         }
@@ -277,7 +291,9 @@ struct ScriptTextView: NSViewRepresentable {
 
         func restyle(_ tv: NSTextView) {
             guard let storage = tv.textStorage else { return }
-            ScriptStyler.apply(to: storage, fontName: parent.fontName, fontSize: parent.fontSize)
+            let caret = tv.window?.firstResponder === tv ? tv.selectedRange().location : nil
+            ScriptStyler.apply(to: storage, fontName: parent.fontName, fontSize: parent.fontSize, caret: caret)
+            lastPair = pairIndex(tv)
             tv.typingAttributes = [.font: Theme.scriptFont(parent.fontName, parent.fontSize), .foregroundColor: NSColor.textColor]
         }
     }
