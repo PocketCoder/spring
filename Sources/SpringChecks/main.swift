@@ -292,5 +292,13 @@ check(Templates.render("# {{title}}\nCreated {{date}} {{time}}\n<% tp.file.title
 check(Templates.render("{{date:dddd D MMMM YYYY}} [{{ time:h:mm A }}]", title: "", date: when) == "Tuesday 3 November 2026 [2:05 PM]", "moment formats: \(Templates.render("{{date:dddd D MMMM YYYY}} [{{ time:h:mm A }}]", title: "", date: when))")
 check(Templates.formatted(when, moment: "[Week of] YYYY-MM-DD") == "Week of 2026-11-03", "bracketed literal")
 
+// Dual dialogue side by side
+let duet = SP.paginate(["INT. A - DAY\n\nBRICK\nScrew retirement.\n\nSTEEL ^\n(laughing)\nScrew retirement.\n\nThey drink."])[0].compactMap { $0 }
+check(duet[1].text == "BRICK" && duet[1].rightText == "STEEL" && duet[1].indent == 8 && duet[1].rightIndent == 39, "cues side by side: \(duet.map { $0.text + " | " + $0.rightText })")
+check(duet[2].text == "Screw retirement." && duet[2].rightText == "(laughing)" && duet[3].text.isEmpty && duet[3].rightText == "Screw retirement.", "columns run independently")
+check(duet.last?.text == "They drink.", "action after the duet")
+let solo = SP.paginate(["INT. A - DAY\n\nSTEEL ^\nAlone."])[0].compactMap { $0 }
+check(solo[1].text == "STEEL" && solo[1].rightText.isEmpty, "^ with no speech before it prints normally")
+
 try? FileManager.default.removeItem(at: dir)
 print("SpringChecks: all passed")

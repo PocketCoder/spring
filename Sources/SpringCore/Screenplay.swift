@@ -23,7 +23,11 @@ public enum Screenplay {
         public var align: Align = .left
         /// Printed in the margins beside a scene heading when scene numbers are on.
         public var sceneNumber: String?
+        /// Dual dialogue: the second speaker's column on the same row.
+        public var right: [Run] = []
+        public var rightIndent: Int = 0
         public var text: String { runs.map(\.text).joined() }
+        public var rightText: String { right.map(\.text).joined() }
     }
 
     /// nil is a blank line.
@@ -104,7 +108,7 @@ public enum Screenplay {
 
     // MARK: Blocks
 
-    enum Kind { case heading, action, dialogue, transition, centered, pageBreak }
+    enum Kind { case heading, action, dialogue, dual, transition, centered, pageBreak }
 
     struct Block {
         var kind: Kind
@@ -112,6 +116,8 @@ public enum Screenplay {
         var spaceBefore: Int
         /// Index of the cue line for dialogue blocks (always 0), used for (CONT'D).
         var cue: String?
+        /// Dialogue source, kept so a following ^ speech can lay both out side by side.
+        var speech: [(paren: Bool, text: String)] = []
     }
 
     /// Strips what never prints: [[notes]], /* boneyard */, sections and synopses are dropped by kind.
@@ -158,11 +164,14 @@ public enum Screenplay {
                     blocks.append(Block(kind: .centered, lines: [Line(runs: runs(c), align: .center)], spaceBefore: 1)); i += 1
                 case .character:
                     var cue = t.hasPrefix("@") ? String(t.dropFirst()) : t
-                    if cue.hasSuffix("^") { cue = String(cue.dropLast()).trimmingCharacters(in: .whitespaces) } // ponytail: dual dialogue printed one after the other
+                    let dual = cue.hasSuffix("^")
+                    if dual { cue = String(cue.dropLast()).trimmingCharacters(in: .whitespaces) }
                     var ls = [Line(runs: runs(cue), indent: cueIndent)]
+                    var speech: [(paren: Bool, text: String)] = []
                     i += 1
                     while i < lines.count, kinds[i] == .dialogue || kinds[i] == .parenthetical {
                         let d = lines[i].trimmingCharacters(in: .whitespaces)
+                        speech.append((kinds[i] == .parenthetical, d))
                         if kinds[i] == .parenthetical {
                             ls += wrap(runs(d), width: parenWidth).map { Line(runs: $0, indent: parenIndent) }
                         } else {
@@ -170,7 +179,11 @@ public enum Screenplay {
                         }
                         i += 1
                     }
-                    blocks.append(Block(kind: .dialogue, lines: ls, spaceBefore: 1, cue: cue))
+                    if dual, let prev = blocks.last, prev.kind == .dialogue, let prevCue = prev.cue {
+                        blocks[blocks.count - 1] = Block(kind: .dual, lines: dualLines(left: (prevCue, prev.speech), right: (cue, speech)), spaceBefore: prev.spaceBefore)
+                    } else {
+                        blocks.append(Block(kind: .dialogue, lines: ls, spaceBefore: 1, cue: cue, speech: speech))
+                    }
                 case .action, .parenthetical, .dialogue:
                     // Consecutive action lines form one paragraph; each source line keeps its own line break.
                     var ls: [Line] = []
@@ -185,6 +198,29 @@ public enum Screenplay {
             }
         }
         return blocks
+    }
+
+    // MARK: Dual dialogue
+
+    // Two 28-character columns: left starts at the margin, right at character 31.
+    static let dualWidth = 28, dualRight = 31, dualCue = 8, dualParen = 3, dualParenWidth = 23
+
+    static func column(_ cue: String, _ speech: [(paren: Bool, text: String)], at x: Int) -> [(runs: [Run], indent: Int)] {
+        var out = [(runs: runs(cue), indent: x + dualCue)]
+        for s in speech {
+            if s.paren { out += wrap(runs(s.text), width: dualParenWidth).map { ($0, x + dualParen) } }
+            else { out += wrap(runs(s.text), width: dualWidth).map { ($0, x) } }
+        }
+        return out
+    }
+
+    static func dualLines(left: (String, [(paren: Bool, text: String)]), right: (String, [(paren: Bool, text: String)])) -> [Line] {
+        let l = column(left.0, left.1, at: 0), r = column(right.0, right.1, at: dualRight)
+        return (0..<Swift.max(l.count, r.count)).map { i in
+            var line = Line(runs: i < l.count ? l[i].runs : [], indent: i < l.count ? l[i].indent : 0)
+            if i < r.count { line.right = r[i].runs; line.rightIndent = r[i].indent }
+            return line
+        }
     }
 
     // MARK: Pagination

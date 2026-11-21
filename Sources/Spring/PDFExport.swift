@@ -22,9 +22,9 @@ enum PDFExport {
         return f
     }
 
-    static func string(_ line: Screenplay.Line) -> NSAttributedString {
+    static func string(_ runs: [Screenplay.Run]) -> NSAttributedString {
         let out = NSMutableAttributedString()
-        for r in line.runs {
+        for r in runs {
             var attrs: [NSAttributedString.Key: Any] = [.font: font(bold: r.bold, italic: r.italic), .foregroundColor: NSColor.black]
             if r.underline { attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue }
             out.append(NSAttributedString(string: r.text, attributes: attrs))
@@ -44,7 +44,7 @@ enum PDFExport {
         let size = paper.size
 
         func draw(_ line: Screenplay.Line, row: Int) {
-            let s = string(line)
+            let s = string(line.runs)
             let y = size.height - top - CGFloat(row + 1) * lineHeight
             let w = s.size().width
             let x: CGFloat
@@ -54,6 +54,9 @@ enum PDFExport {
             case .right: x = left + textWidth - w
             }
             s.draw(at: CGPoint(x: x, y: y))
+            if !line.right.isEmpty {
+                string(line.right).draw(at: CGPoint(x: left + CGFloat(line.rightIndent) * charWidth, y: y))
+            }
             if let n = line.sceneNumber {
                 let num = NSAttributedString(string: n, attributes: [.font: font(bold: true, italic: false), .foregroundColor: NSColor.black])
                 num.draw(at: CGPoint(x: left - 0.75 * 72, y: y))
