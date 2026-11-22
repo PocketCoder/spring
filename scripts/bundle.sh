@@ -5,7 +5,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-VERSION="${1:-0.0.0-dev}"
+VERSION="${1:-$(tr -d '[:space:]' < VERSION)-dev}"
 BUILD_NUMBER="${BUILD_NUMBER:-1}"
 ARCH_FLAGS=()
 [ "${UNIVERSAL:-0}" = "1" ] && ARCH_FLAGS=(--arch arm64 --arch x86_64)

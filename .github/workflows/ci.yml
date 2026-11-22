@@ -48,10 +48,13 @@ jobs:
       - name: Bundle Spring.app
         run: |
           set -euo pipefail
+          base="$(tr -d '[:space:]' < VERSION)"
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             version="${GITHUB_REF_NAME#v}"
+            # A release tag must match VERSION, so the app never reports a different number from its tag.
+            [ "$version" = "$base" ] || { echo "::error::Tag $GITHUB_REF_NAME does not match VERSION ($base)"; exit 1; }
           else
-            version="0.0.0-nightly.${{ github.run_number }}"
+            version="$base-nightly.${{ github.run_number }}"
           fi
           echo "VERSION=$version" >> "$GITHUB_ENV"
           UNIVERSAL=1 BUILD_NUMBER=${{ github.run_number }} scripts/bundle.sh "$version"

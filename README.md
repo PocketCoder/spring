@@ -13,7 +13,8 @@ Needs macOS 15+. Command Line Tools are enough locally; CI uses full Xcode for u
 
 ## Releases and updates
 
-Every push to `main` replaces the `nightly` pre-release. Tags `v*` make a versioned release.
+The version lives in `VERSION`. Every push to `main` replaces the `nightly` pre-release (`<VERSION>-nightly.<run>`).
+A tag `v<VERSION>` makes a versioned release; CI refuses a tag that doesn't match `VERSION`.
 The app checks `https://pocketcoder.github.io/spring/nightly-appcast.xml` (Spring › Check for Updates…).
 
 One-time Sparkle key setup (the private key stays in your keychain and the `SPARKLE_PRIVATE_KEY` secret):
